@@ -1,0 +1,286 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+     <!-- Favicons -->
+    <link rel="icon" href="{% static 'favicon/favicon.ico' %}" type="image/x-icon">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
+    <title>Page Not Found | ImaraDesk</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            min-height: 100vh;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 60px 24px;
+        }
+        .hero {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 60px;
+            align-items: center;
+            margin-bottom: 80px;
+        }
+        .hero-content {
+            max-width: 480px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #f3f4f6;
+            border-radius: 50px;
+            padding: 6px 16px 6px 6px;
+            font-size: 14px;
+            color: #4b5563;
+            margin-bottom: 24px;
+        }
+        .badge-label {
+            background: #4a154b;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 50px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .badge-arrow {
+            margin-left: 4px;
+        }
+        h1 {
+            font-size: 48px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 20px;
+            color: #111827;
+        }
+        .subtitle {
+            color: #6b7280;
+            font-size: 16px;
+            margin-bottom: 32px;
+            max-width: 380px;
+        }
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #4a154b;
+            color: white;
+            padding: 14px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 15px;
+            transition: background 0.2s;
+        }
+        .btn-primary:hover {
+            background: #5a235c;
+        }
+        .hero-graphic {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 320px;
+        }
+        .graphic-bg {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0.15;
+        }
+        .graphic-bg-line {
+            position: absolute;
+            background: #d1d5db;
+            transform-origin: center;
+        }
+        .graphic-bg-line-1 {
+            width: 200%;
+            height: 1px;
+            top: 50%;
+            left: -50%;
+            transform: rotate(-45deg);
+        }
+        .graphic-bg-line-2 {
+            width: 200%;
+            height: 1px;
+            top: 50%;
+            left: -50%;
+            transform: rotate(45deg);
+        }
+        .four {
+            position: absolute;
+            font-size: 100px;
+            font-weight: 700;
+            color: #e5e7eb;
+            opacity: 0.6;
+        }
+        .four-1 { top: 0; right: 20%; }
+        .four-2 { top: 10%; left: 10%; }
+        .four-3 { bottom: 20%; left: 20%; }
+        .four-4 { bottom: 10%; right: 10%; }
+        .icon-box {
+            position: relative;
+            z-index: 1;
+            width: 120px;
+            height: 120px;
+            background: #4a154b;
+            border-radius: 24px;
+            transform: rotate(45deg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 25px 50px -12px rgba(74, 21, 75, 0.35);
+        }
+        .icon-box svg {
+            transform: rotate(-45deg);
+            width: 48px;
+            height: 48px;
+            color: white;
+        }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        .card {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            padding: 28px;
+            transition: box-shadow 0.2s;
+        }
+        .card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        .card-icon {
+            font-size: 20px;
+            margin-bottom: 4px;
+        }
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #111827;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card-desc {
+            color: #6b7280;
+            font-size: 14px;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        .card-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: #111827;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+        .card-link:hover {
+            color: #4a154b;
+        }
+        @media (max-width: 900px) {
+            .hero {
+                grid-template-columns: 1fr;
+                gap: 40px;
+            }
+            .hero-graphic {
+                order: -1;
+                min-height: 240px;
+            }
+            h1 {
+                font-size: 36px;
+            }
+            .cards {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <div class="hero-content">
+                <div class="badge">
+                    <span class="badge-label">404</span>
+                    <span>Oops, page not found.</span>
+                    <span class="badge-arrow">→</span>
+                </div>
+                <h1>Don't worry,<br>we've got you.</h1>
+                <p class="subtitle">The page you're looking for seems to have wandered off. It might have been moved, deleted, or perhaps never existed.</p>
+                <a href="javascript:history.back()" class="btn-primary">
+                    <span>←</span>
+                    <span>Go Back</span>
+                </a>
+            </div>
+            <div class="hero-graphic">
+                <div class="graphic-bg">
+                    <div class="graphic-bg-line graphic-bg-line-1"></div>
+                    <div class="graphic-bg-line graphic-bg-line-2"></div>
+                </div>
+                <span class="four four-1">4</span>
+                <span class="four four-2">4</span>
+                <span class="four four-3">4</span>
+                <span class="four four-4">4</span>
+                <div class="icon-box">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <div class="cards">
+            <div class="card">
+                <div class="card-title">
+                    <span class="card-icon">📚</span>
+                    Knowledge Base
+                </div>
+                <p class="card-desc">Find answers in our comprehensive help center. Browse guides, tutorials, and documentation to solve issues fast.</p>
+                <a href="/help" class="card-link">
+                    <span>Explore Help Center</span>
+                    <span>→</span>
+                </a>
+            </div>
+            <div class="card">
+                <div class="card-title">
+                    <span class="card-icon">💬</span>
+                    Get Support
+                </div>
+                <p class="card-desc">Need help from our team? Open a support ticket and we'll respond as quickly as possible to get you sorted.</p>
+                <a href="/contact" class="card-link">
+                    <span>Contact Support</span>
+                    <span>→</span>
+                </a>
+            </div>
+            <div class="card">
+                <div class="card-title">
+                    <span class="card-icon">🎯</span>
+                    Quick Actions
+                </div>
+                <p class="card-desc">Jump back into your workflow. Access your dashboard, check your tickets, or manage your account settings.</p>
+                <a href="/dashboard" class="card-link">
+                    <span>Go to Dashboard</span>
+                    <span>→</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,147 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="{% static 'favicon/favicon.ico' %}" type="image/x-icon">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
+    <title>Account Inactive | ImaraDesk</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 500px;
+            text-align: center;
+            padding: 40px 24px;
+        }
+        .icon-wrapper {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #4a154b 0%, #320a32 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .icon-wrapper svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #111827;
+        }
+        .subtitle {
+            font-size: 18px;
+            color: #6b7280;
+            margin-bottom: 32px;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+        }
+        .card p {
+            color: #4b5563;
+            margin-bottom: 16px;
+        }
+        .card p:last-child {
+            margin-bottom: 0;
+        }
+        .contact-info {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 16px;
+        }
+        .contact-info a {
+            color: #4a154b;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .contact-info a:hover {
+            text-decoration: underline;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #4a154b;
+            color: white;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #5a235c;
+        }
+        .footer {
+            margin-top: 32px;
+            font-size: 14px;
+            color: #9ca3af;
+        }
+        .footer a {
+            color: #6b7280;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon-wrapper">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path>
+            </svg>
+        </div>
+        
+        <h1>Account Inactive</h1>
+        <p class="subtitle">This workspace is currently unavailable</p>
+        
+        <div class="card">
+            <p>The helpdesk account <strong>{{ business_name }}</strong> has been deactivated by the administrator.</p>
+            <p>If you believe this is an error or need to reactivate your account, please contact our support team.</p>
+            
+            <div class="contact-info">
+                <p style="margin: 0;"><strong>Need help?</strong></p>
+                <p style="margin: 8px 0 0 0;">Email us at <a href="mailto:support@coredesk.pro">support@coredesk.pro</a></p>
+            </div>
+        </div>
+        
+        <a href="https://imaradesk.com" class="btn">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+            </svg>
+            Go to ImaraDesk
+        </a>
+        
+        <div class="footer">
+            <p>&copy; 2026 ImaraDesk. <a href="https://imaradesk.com/privacy">Privacy</a> · <a href="https://imaradesk.com/terms">Terms</a></p>
+        </div>
+    </div>
+</body>
+</html>

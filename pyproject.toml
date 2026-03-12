@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imaradesk-core"
+version = "1.0.0"
+description = "ImaraDesk Core - Open Source Helpdesk Ticket Management System"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "ImaraDesk Team", email = "support@imaradesk.com"}
+]
+keywords = ["helpdesk", "ticketing", "support", "django", "customer-service"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Customer Service",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Office/Business :: Groupware",
+]
+dependencies = [
+    "Django>=5.0",
+    "inertia-django",
+    "psycopg2-binary>=2.9",
+    "mysqlclient>=2.1",
+    "python-decouple>=3.8",
+    "whitenoise>=6.6",
+    "gunicorn>=22.0",
+    "django-cors-headers",
+    "pytz>=2024.1",
+    "celery>=5.4",
+    "redis>=5.0",
+    "django-celery-beat>=2.6",
+    "django-celery-results>=2.5",
+    "dnspython>=2.6",
+    "requests>=2.31",
+    "openpyxl>=3.1",
+    "pyotp>=2.9",
+    "qrcode[pil]>=7.4",
+    "disposable-email-domains>=0.0.90",
+]
+
+[project.optional-dependencies]
+dev = [
+    "supervisor>=4.2",
+]
+postgres = [
+    "psycopg2-binary>=2.9",
+]
+mysql = [
+    "mysqlclient>=2.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/imaradesk/imaradesk-os"
+Documentation = "https://docs.imaradesk.com"
+Repository = "https://github.com/imaradesk/imaradesk-os"
+"Bug Tracker" = "https://github.com/imaradesk/imaradesk-os/issues"
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages.find]
+exclude = ["env", "env.*", "frontend", "frontend.*", "media", "media.*", ".vite", ".vscode", "*.tests", "*.tests.*"]
+
+[tool.setuptools.package-data]
+"*" = ["templates/*.html", "templates/**/*.html", "static/*", "static/**/*", "migrations/*.py"]

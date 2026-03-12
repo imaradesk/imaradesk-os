@@ -1,0 +1,43 @@
+include README.md
+include LICENSE
+include requirements.txt
+include manage.py
+
+# Config module
+recursive-include config *.py
+
+# Shared module
+recursive-include shared *.py
+recursive-include shared/management *.py
+recursive-include shared/middlewares *.py
+recursive-include shared/decorators *.py
+recursive-include shared/utilities *.py
+recursive-include shared/migrations *.py
+
+# All modules
+recursive-include modules *.py
+recursive-include modules/*/templates *
+recursive-include modules/*/static *
+recursive-include modules/*/management *.py
+recursive-include modules/*/migrations *.py
+
+# Templates
+recursive-include templates *.html
+
+# Static files (pre-built frontend assets)
+recursive-include static *
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store
+global-exclude *.sqlite3
+global-exclude .env
+global-exclude .env.*
+prune env
+prune frontend
+prune media
+prune .vite
+prune .vscode
+prune .git
+prune .idea
