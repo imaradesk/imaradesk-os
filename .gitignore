@@ -44,3 +44,7 @@ db.sqlite3-journal
 # OS
 .DS_Store
 Thumbs.db
+
+# Docker build (contains credentials - never commit)
+Dockerfile
+build.py
