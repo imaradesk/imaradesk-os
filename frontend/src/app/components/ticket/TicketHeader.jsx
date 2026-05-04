@@ -4,14 +4,45 @@ import Button from '../../../components/Button'
 import Avatar from '../../../components/Avatar'
 import Select from '../SearchableSelect'
 
+// Helper function to format SLA time
+const formatSlaTime = (hours) => {
+  if (hours === null || hours === undefined) return null
+  if (hours < 1) {
+    const minutes = Math.round(hours * 60)
+    return `${minutes}m`
+  } else if (hours < 24) {
+    const h = Math.floor(hours)
+    const m = Math.round((hours % 1) * 60)
+    return m > 0 ? `${h}h ${m}m` : `${h}h`
+  } else {
+    const days = Math.floor(hours / 24)
+    const remainingHours = Math.round(hours % 24)
+    return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+  }
+}
+
 const statusColors = {
-  new: 'bg-blue-100 text-blue-700',
-  open: 'bg-yellow-100 text-yellow-700',
-  in_progress: 'bg-purple-100 text-purple-700',
+  new: 'bg-purple-100 text-purple-700',
+  open: 'bg-blue-100 text-blue-700',
+  in_progress: 'bg-yellow-100 text-yellow-700',
   pending: 'bg-orange-100 text-orange-700',
   resolved: 'bg-green-100 text-green-700',
   closed: 'bg-gray-100 text-gray-700',
   merged: 'bg-slate-200 text-slate-700',
+}
+
+// Helper to get display label from computed_status
+const getStatusDisplay = (computedStatus) => {
+  if (!computedStatus) return 'Unknown'
+  const labels = {
+    'new': 'New',
+    'open': 'Open',
+    'in_progress': 'In Progress',
+    'pending': 'On Hold',
+    'resolved': 'Resolved',
+    'closed': 'Closed',
+  }
+  return labels[computedStatus] || computedStatus
 }
 
 const priorityColors = {
@@ -27,13 +58,18 @@ export default function TicketHeader({
   onAssignToMe, 
   onStatusChange, 
   onResumeTicket,
-  onMergeTicket 
+  onMergeTicket,
+  readOnly = false
 }) {
   const isMerged = ticket?.is_merged
-  const isOnHold = ticket?.status === 'pending' || ticket?.status === 'hold'
-  const canAssign = !isMerged && (!ticket?.assignee || ticket?.assignee?.id !== currentUser?.id)
-  const canMerge = !isMerged && ticket?.status !== 'closed'
+  const computedStatus = ticket?.computed_status || ticket?.status
+  const isOnHold = computedStatus === 'pending' || computedStatus === 'hold'
+  const isResolved = computedStatus === 'resolved'
+  const isClosed = computedStatus === 'closed'
+  const canAssign = !readOnly && !isMerged && (!ticket?.assignee || ticket?.assignee?.id !== currentUser?.id)
+  const canMerge = !readOnly && !isMerged && computedStatus !== 'closed'
   const canChangeStatus = !isMerged
+  const canReopen = isResolved || isClosed
   
   // More actions dropdown state
   const [showMoreActions, setShowMoreActions] = useState(false)
@@ -62,7 +98,7 @@ export default function TicketHeader({
             <p className="text-sm text-slate-700">
               This ticket has been merged into{' '}
               <button
-                onClick={() => router.visit(`/tickets/${ticket.merged_into.id}`)}
+                onClick={() => router.visit(`/tickets/${ticket.merged_into.uuid}`)}
                 className="font-semibold text-[#4a154b] hover:underline"
               >
                 {ticket.merged_into.ticket_number}
@@ -94,8 +130,8 @@ export default function TicketHeader({
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-2">
             <span className="text-gray-500 font-medium text-lg">{ticket?.ticket_number}</span>
-            <span className={`px-3 py-1 text-xs font-medium rounded-full ${isMerged ? statusColors.merged : (statusColors[ticket?.status] || 'bg-gray-100 text-gray-700')}`}>
-              {isMerged ? 'Merged' : (ticket?.status_display || 'Open')}
+            <span className={`px-3 py-1 text-xs font-medium rounded-full ${isMerged ? statusColors.merged : (statusColors[computedStatus] || 'bg-gray-100 text-gray-700')}`}>
+              {isMerged ? 'Merged' : getStatusDisplay(computedStatus)}
             </span>
             {!isMerged && (
               <span className={`text-sm font-semibold ${priorityColors[ticket?.priority] || ''}`}>
@@ -141,6 +177,82 @@ export default function TicketHeader({
                 <p className="font-medium text-gray-900">{ticket.department}</p>
               </div>
             )}
+            
+            {/* SLA Section */}
+            {ticket?.sla_info && (
+              <>
+                <div className="h-10 w-px bg-gray-300" />
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">SLA</p>
+                  <div className="flex items-center gap-2">
+                    {ticket.sla_info.is_on_hold ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                        </svg>
+                        On Hold
+                      </span>
+                    ) : ticket.sla_info.overall_status === 'breached' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        Breached
+                      </span>
+                    ) : ticket.sla_info.overall_status === 'at_risk' ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        At Risk
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        On Track
+                      </span>
+                    )}
+                    {ticket.sla_info.policy_name && (
+                      <span className="text-sm font-medium text-gray-700">{ticket.sla_info.policy_name}</span>
+                    )}
+                  </div>
+                </div>
+                {/* Response SLA */}
+                {ticket.sla_info.response && (
+                  <div>
+                    <p className="text-xs text-gray-500">Response</p>
+                    <p className={`font-medium text-sm ${
+                      ticket.sla_info.response.breached ? 'text-red-600' : 
+                      ticket.sla_info.response.status === 'at_risk' ? 'text-yellow-600' : 'text-gray-900'
+                    }`}>
+                      {ticket.sla_info.response.breached 
+                        ? `Overdue ${formatSlaTime(ticket.sla_info.response.hours_overdue)}`
+                        : ticket.sla_info.response.hours_remaining !== null 
+                          ? `${formatSlaTime(ticket.sla_info.response.hours_remaining)} left`
+                          : '—'}
+                    </p>
+                  </div>
+                )}
+                {/* Resolution SLA */}
+                {ticket.sla_info.resolution && (
+                  <div>
+                    <p className="text-xs text-gray-500">Resolution</p>
+                    <p className={`font-medium text-sm ${
+                      ticket.sla_info.resolution.breached ? 'text-red-600' : 
+                      ticket.sla_info.resolution.status === 'at_risk' ? 'text-yellow-600' : 'text-gray-900'
+                    }`}>
+                      {ticket.sla_info.resolution.breached 
+                        ? `Overdue ${formatSlaTime(ticket.sla_info.resolution.hours_overdue)}`
+                        : ticket.sla_info.resolution.hours_remaining !== null 
+                          ? `${formatSlaTime(ticket.sla_info.resolution.hours_remaining)} left`
+                          : '—'}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
         {!isMerged && (
@@ -171,14 +283,18 @@ export default function TicketHeader({
                   options={
                     isOnHold
                       ? [{ id: 'resume', name: 'Resume' }]
-                      : [
-                          { id: 'new', name: 'New' },
-                          { id: 'open', name: 'Open' },
-                          { id: 'in_progress', name: 'In Progress' },
-                          { id: 'pending', name: 'On Hold' },
-                          { id: 'resolved', name: 'Resolved' },
-                          { id: 'closed', name: 'Closed' },
-                        ]
+                      : canReopen
+                        ? [
+                            { id: 'in_progress', name: 'Reopen (In Progress)' },
+                            { id: 'open', name: 'Reopen (Open)' },
+                          ]
+                        : [
+                            { id: 'new', name: 'New' },
+                            { id: 'open', name: 'Open' },
+                            { id: 'in_progress', name: 'In Progress' },
+                            { id: 'pending', name: 'On Hold' },
+                            { id: 'resolved', name: 'Resolved' },
+                          ]
                   }
                   placeholder="Select status"
                   displayKey="name"

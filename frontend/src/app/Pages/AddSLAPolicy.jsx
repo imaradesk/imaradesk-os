@@ -21,8 +21,6 @@ export default function AddSLAPolicy({ policy = null }) {
     first_response_time: policy?.first_response_time || 60,
     resolution_time: policy?.resolution_time || 240,
     apply_to_new_tickets: policy?.apply_to_new_tickets ?? true,
-    escalate_on_breach: policy?.escalate_on_breach ?? false,
-    auto_assign_on_breach: policy?.auto_assign_on_breach ?? false,
   })
 
   const steps = [
@@ -369,45 +367,31 @@ export default function AddSLAPolicy({ policy = null }) {
                           <p className="text-sm text-gray-700">Configure automated actions and conditions for this SLA policy.</p>
                         </div>
 
-                        <div className="space-y-4">
-                          <label className="flex items-start gap-3 p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={formData.apply_to_new_tickets}
-                              onChange={(e) => setFormData({ ...formData, apply_to_new_tickets: e.target.checked })}
-                              className="w-5 h-5 mt-0.5 text-[#4a154b] rounded focus:ring-2 focus:ring-[#4a154b]"
-                            />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-900">Apply to New Tickets</p>
-                              <p className="text-xs text-gray-500 mt-1">Automatically apply this policy to new tickets matching the priority level</p>
+                        {/* Trigger Rules Section */}
+                        <div className="border border-gray-200 rounded-lg p-5 bg-white">
+                          <div className="flex items-center justify-between mb-4">
+                            <div>
+                              <h3 className="text-sm font-semibold text-gray-800">Trigger Rules</h3>
+                              <p className="text-xs text-gray-500">Define when this SLA policy should be applied to tickets</p>
                             </div>
-                          </label>
+                          </div>
 
-                          <label className="flex items-start gap-3 p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={formData.escalate_on_breach}
-                              onChange={(e) => setFormData({ ...formData, escalate_on_breach: e.target.checked })}
-                              className="w-5 h-5 mt-0.5 text-[#4a154b] rounded focus:ring-2 focus:ring-[#4a154b]"
-                            />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-900">Escalate on Breach</p>
-                              <p className="text-xs text-gray-500 mt-1">Automatically escalate the ticket when SLA is breached</p>
-                            </div>
-                          </label>
-
-                          <label className="flex items-start gap-3 p-4 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                            <input
-                              type="checkbox"
-                              checked={formData.auto_assign_on_breach}
-                              onChange={(e) => setFormData({ ...formData, auto_assign_on_breach: e.target.checked })}
-                              className="w-5 h-5 mt-0.5 text-[#4a154b] rounded focus:ring-2 focus:ring-[#4a154b]"
-                            />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-gray-900">Auto-assign on Breach</p>
-                              <p className="text-xs text-gray-500 mt-1">Automatically assign to a supervisor when SLA is breached</p>
-                            </div>
-                          </label>
+                          <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <label className="flex items-start gap-3 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={formData.apply_to_new_tickets}
+                                onChange={(e) => setFormData({ ...formData, apply_to_new_tickets: e.target.checked })}
+                                className="w-5 h-5 mt-0.5 text-[#4a154b] rounded focus:ring-2 focus:ring-[#4a154b]"
+                              />
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-gray-900">Apply to New Tickets</p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  Automatically apply this policy to new tickets with <strong className="text-gray-700">{formData.priority}</strong> priority
+                                </p>
+                              </div>
+                            </label>
+                          </div>
                         </div>
                       </div>
                     )}

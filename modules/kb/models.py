@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
@@ -9,7 +10,7 @@ class KBCategory(models.Model):
     """Knowledge Base Category"""
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
-    icon = models.CharField(max_length=10, default='📁')
+    icon = models.CharField(max_length=30, default='Folder')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='kb_categories')
@@ -18,6 +19,7 @@ class KBCategory(models.Model):
         verbose_name = 'KB Category'
         verbose_name_plural = 'KB Categories'
         ordering = ['name']
+        db_table = "kb_category"
     
     def __str__(self):
         return self.name
@@ -33,6 +35,15 @@ class KBArticle(models.Model):
     
     title = models.CharField(max_length=300)
     slug = models.SlugField(max_length=350, unique=True, blank=True)
+    uuid = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        blank=True,
+        null=True,
+        help_text="Universally unique identifier for the article"
+    )
+    display_image = models.URLField(max_length=500, blank=True, null=True, help_text='Display image URL for the article')
     summary = models.TextField(blank=True, help_text='Brief summary for search results')
     content = models.TextField()
     category = models.ForeignKey(KBCategory, on_delete=models.SET_NULL, null=True, related_name='articles')
@@ -50,6 +61,7 @@ class KBArticle(models.Model):
         verbose_name = 'KB Article'
         verbose_name_plural = 'KB Articles'
         ordering = ['-created_at']
+        db_table = "kb_article"
     
     def __str__(self):
         return self.title

@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import KBSidebar from '../components/KBSidebar'
 import ConfirmDialog from '../components/ConfirmDialog'
+import DataTable from '../../components/DataTable'
 import { CheckCircle2 } from 'lucide-react'
 
 export default function KBApprovals({ articles = [], requiresApproval = true, autoPublishOnApproval = true, pagination = {}, sidebar = { views: [] }, pendingCount = 0 }) {
@@ -111,113 +112,75 @@ export default function KBApprovals({ articles = [], requiresApproval = true, au
               </div>
             )}
 
-            {/* Articles List */}
-            {articles.length === 0 ? (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <div className="text-gray-400 mb-4">
-                  <CheckCircle2 className="w-16 h-16 mx-auto" />
-                </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No pending approvals</h3>
-                <p className="text-gray-600">All knowledge base articles have been reviewed.</p>
-              </div>
-            ) : (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Article</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Author</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted</th>
-                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {articles.map((article) => (
-                      <tr key={article.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col">
-                            <Link
-                              href={`/knowledgebase/article/${article.id}/`}
-                              className="text-sm font-medium text-blue-600 hover:text-blue-800"
-                            >
-                              {article.title}
-                            </Link>
-                            {article.summary && (
-                              <p className="text-sm text-gray-500 mt-1 line-clamp-2">{article.summary}</p>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {article.category || 'Uncategorized'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {article.author}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDate(article.created_at)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                          <div className="flex items-center justify-end gap-2">
-                            <Link
-                              href={`/knowledgebase/article/${article.id}/`}
-                              className="text-blue-600 hover:text-blue-900"
-                            >
-                              View
-                            </Link>
-                            <button
-                              onClick={() => handleApprove(article.id)}
-                              className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => handleReject(article.id)}
-                              className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination */}
-            {pagination.pages > 1 && (
-              <div className="mt-6 flex items-center justify-between">
-                <div className="text-sm text-gray-700">
-                  Showing <span className="font-medium">{articles.length}</span> of{' '}
-                  <span className="font-medium">{pagination.count}</span> results
-                </div>
-                <div className="flex gap-2">
-                  {pagination.has_prev && (
-                    <Link
-                      href={`/knowledgebase/approvals/?page=${pagination.page - 1}`}
-                      className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      Previous
-                    </Link>
-                  )}
-                  <span className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white">
-                    Page {pagination.page} of {pagination.pages}
-                  </span>
-                  {pagination.has_next && (
-                    <Link
-                      href={`/knowledgebase/approvals/?page=${pagination.page + 1}`}
-                      className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      Next
-                    </Link>
-                  )}
-                </div>
-              </div>
-            )}
+            <DataTable
+              data={articles}
+              defaultSortKey="created_at"
+              columns={[
+                {
+                  key: 'title',
+                  header: 'Article',
+                  render: (article) => (
+                    <div className="flex flex-col">
+                      <Link
+                        href={`/knowledgebase/article/${article.uuid}/`}
+                        className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                      >
+                        {article.title}
+                      </Link>
+                      {article.summary && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{article.summary}</p>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'category',
+                  header: 'Category',
+                  render: (article) => (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      {article.category || 'Uncategorized'}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'author',
+                  header: 'Author',
+                },
+                {
+                  key: 'created_at',
+                  header: 'Submitted',
+                  render: (article) => formatDate(article.created_at),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  sortable: false,
+                  hideable: false,
+                  render: (article) => (
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/knowledgebase/article/${article.uuid}/`}
+                        className="text-blue-600 hover:text-blue-900"
+                      >
+                        View
+                      </Link>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleApprove(article.uuid) }}
+                        className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleReject(article.uuid) }}
+                        className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
         </main>
         </div>
@@ -247,7 +210,7 @@ export default function KBApprovals({ articles = [], requiresApproval = true, au
       {/* Reject Modal */}
       {showRejectModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+          <div className="bg-white -xl max-w-md w-full mx-4">
             <div className="p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Reject Article</h3>
               <p className="text-sm text-gray-600 mb-4">

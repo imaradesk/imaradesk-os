@@ -45,7 +45,7 @@ export default function WorkItemsTab({
 
       <div className="space-y-3">
         {workItems.map((item) => (
-          <div key={item.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow">
+          <div key={item.id} className="bg-white -sm border border-gray-200 p-4 hover:shadow-md transition-shadow">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-2">

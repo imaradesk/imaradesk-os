@@ -9,13 +9,18 @@ An open-source helpdesk and ticket management system built with Django and React
 ## Features
 
 - **Ticket Management** - Create, assign, and track support tickets with customizable statuses and priorities
-- **SLA Tracking** - Define service level agreements and monitor response/resolution times
-- **Knowledge Base** - Build a self-service knowledge base for customers
-- **Customer Portal** - Allow customers to submit and track their tickets
+- **Email-to-Ticket** - Automatically convert incoming emails into support tickets with IMAP/POP3 polling
+- **SLA Tracking** - Define service level agreements and monitor response/resolution times with auto-apply triggers
+- **Knowledge Base** - Build a self-service knowledge base with categories, approvals, and versioning
+- **Customer Portal** - Allow customers to submit tickets, track progress, view ticket details, and search KB articles
+- **Task Management** - Create and manage tasks linked to tickets with status tracking
 - **Team Management** - Organize agents into teams with roles and permissions
-- **Email Notifications** - Automated email notifications for ticket updates
-- **Reports & Analytics** - Track team performance and ticket metrics
+- **Email Notifications** - Automated email notifications with customizable templates
+- **Reports & Analytics** - Track team performance and ticket metrics with visual charts
+- **Guided Onboarding** - Step-by-step Quick Start wizard for initial setup (modules, channels, users, SLA, SMTP, notifications)
+- **Channels** - Web and Email support channels with configuration UI
 - **Two-Factor Authentication** - Secure your account with 2FA
+- **Surveys** - Collect customer feedback after ticket resolution
 
 ## Requirements
 
@@ -142,6 +147,15 @@ For scheduled tasks (SLA checks, etc.):
 celery -A config beat -l info
 ```
 
+### Quick Start (All Services at Once)
+
+Use the included dev script to start Django, Celery worker, Celery beat, and Vite dev server in one command:
+
+```bash
+chmod +x dev.sh
+./dev.sh
+```
+
 ## First-Time Setup
 
 1. Open your browser and go to `http://localhost:8000`
@@ -161,13 +175,17 @@ imaradesk-os/
 │   └── wsgi.py         # WSGI entry point
 ├── modules/            # Application modules
 │   ├── core/           # Core functionality
-│   ├── tickets/        # Ticket management
+│   ├── tickets/        # Ticket management (views/routing)
+│   ├── ticket/         # Ticket model and signals
 │   ├── people/         # Contacts and customers
 │   ├── users/          # User management
 │   ├── kb/             # Knowledge base
 │   ├── sla/            # SLA management
-│   ├── settings/       # App settings
+│   ├── settings/       # App settings, channels, marketplace
 │   ├── customer_portal/# Customer portal
+│   ├── email_to_ticket/# Email-to-ticket conversion (IMAP/POP3)
+│   ├── onboarding/     # Guided onboarding wizard
+│   ├── tasks/          # Task management
 │   └── crons/          # Scheduled tasks
 ├── shared/             # Shared utilities and middleware
 ├── frontend/           # React frontend (Vite)

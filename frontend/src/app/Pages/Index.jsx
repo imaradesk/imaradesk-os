@@ -17,27 +17,17 @@ import {
   Cell,
 } from 'recharts'
 import {
-  Users,
-  Mail,
-  Bell,
-  Clock,
-  Shield,
   ClipboardList,
   CheckCircle,
   Eye,
   FolderOpen,
   Lock,
-  Zap,
   Settings,
-  ChevronRight,
-  Check,
-  X,
 } from 'lucide-react'
 
 export default function Index({ message, user, dashboard = {}, timeFilter: initialTimeFilter = '7days' }) {
   const [timeFilter, setTimeFilter] = useState(initialTimeFilter)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [showQuickStart, setShowQuickStart] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleTimeFilterChange = (value) => {
@@ -62,158 +52,13 @@ export default function Index({ message, user, dashboard = {}, timeFilter: initi
     return titles[timeFilter] || 'Performance'
   }
 
-  const onboardingSteps = [
-    { id: 'team', title: 'Team Setup', description: 'Add team members & groups', icon: Users, link: '/settings/team/users', completed: false },
-    { id: 'email', title: 'Email Settings', description: 'Configure email notifications', icon: Mail, link: '/settings/email/', completed: false },
-    { id: 'notifications', title: 'Notifications', description: 'Customize Notifications', icon: Bell, link: '/settings/notifications', completed: false },
-    { id: 'sla', title: 'SLA Policies', description: 'Configure service level agreements', icon: Clock, link: '/settings/sla/policies/', completed: false },
-    { id: 'security', title: 'Security & 2FA', description: 'Configure your Security features', icon: Shield, link: '/settings/security/', completed: false },
-  ]
-
-  const completedSteps = onboardingSteps.filter(step => step.completed).length
-  const totalSteps = onboardingSteps.length
-  const progress = (completedSteps / totalSteps) * 100
-
   return (
     <>
       <Head title="Dashboard" />
       <AppShell active="home" topBarVariant="transparent">
         <div className="bg-gray-50 relative">
-          {/* Quick Start FAB Button */}
-          <button
-            onClick={() => setShowQuickStart(true)}
-            className="fixed bottom-8 right-8 z-40 group"
-            title="Quick Start Guide"
-          >
-            <div className="relative">
-              {/* Animated rings */}
-              <span className="absolute inset-0 rounded-full bg-[#4a154b] animate-ping opacity-30"></span>
-              <span className="absolute inset-0 rounded-full bg-[#4a154b] animate-pulse opacity-20 scale-125"></span>
-              
-              {/* Main button */}
-              <div className="relative w-14 h-14 bg-gradient-to-br from-[#4a154b] to-[#7c3085] rounded-full shadow-lg flex items-center justify-center transform transition-all duration-300 hover:scale-110 hover:shadow-xl animate-bounce-slow">
-                {/* Glitter effect */}
-                <div className="absolute inset-0 rounded-full overflow-hidden">
-                  <div className="absolute top-1 right-2 w-2 h-2 bg-white rounded-full opacity-60 animate-twinkle"></div>
-                  <div className="absolute bottom-3 left-2 w-1.5 h-1.5 bg-white rounded-full opacity-40 animate-twinkle-delayed"></div>
-                  <div className="absolute top-4 left-3 w-1 h-1 bg-white rounded-full opacity-50 animate-twinkle"></div>
-                </div>
-                
-                {/* Icon */}
-                <Zap className="w-6 h-6 text-white" />
-              </div>
-              
-              {/* Badge */}
-              <span className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center text-xs font-bold text-gray-900 shadow animate-pulse">
-                {totalSteps - completedSteps}
-              </span>
-            </div>
-          </button>
 
-          {/* Quick Start Drawer */}
-          <div className={`fixed inset-0 z-50 ${showQuickStart ? 'visible' : 'invisible'}`}>
-            {/* Backdrop */}
-            <div 
-              className={`absolute inset-0 bg-black transition-opacity duration-300 ${showQuickStart ? 'opacity-50' : 'opacity-0'}`}
-              onClick={() => setShowQuickStart(false)}
-            ></div>
-            
-            {/* Drawer Panel */}
-            <div className={`absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl transform transition-transform duration-300 ease-out ${showQuickStart ? 'translate-x-0' : 'translate-x-full'}`}>
-              {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-[#4a154b] to-[#7c3085]">
-                <div>
-                  <h2 className="text-xl font-semibold text-white flex items-center gap-2">
-                    <Zap className="w-6 h-6" />
-                    Quick Start
-                  </h2>
-                  <p className="text-sm text-purple-200 mt-1">
-                    {completedSteps} of {totalSteps} steps completed
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowQuickStart(false)}
-                  className="text-white/80 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-lg"
-                >
-                  <X className="w-6 h-6" />
-                </button>
-              </div>
-
-              {/* Progress Bar */}
-              <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-gray-600">Setup Progress</span>
-                  <span className="font-medium text-[#4a154b]">{Math.round(progress)}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-gradient-to-r from-[#4a154b] to-[#7c3085] rounded-full h-2 transition-all duration-500"
-                    style={{ width: `${progress}%` }}
-                  ></div>
-                </div>
-              </div>
-
-              {/* Steps */}
-              <div className="overflow-y-auto h-[calc(100%-200px)] p-6">
-                <div className="space-y-4">
-                  {onboardingSteps.map((step, index) => (
-                    <Link
-                      key={step.id}
-                      href={step.link}
-                      className="block group"
-                      onClick={() => setShowQuickStart(false)}
-                    >
-                      <div className={`p-4 rounded-xl border-2 transition-all duration-200 ${
-                        step.completed 
-                          ? 'border-green-200 bg-green-50' 
-                          : 'border-gray-200 bg-white hover:border-[#4a154b] hover:shadow-md'
-                      }`}>
-                        <div className="flex items-center gap-4">
-                          {/* Step indicator */}
-                          <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-lg font-semibold ${
-                            step.completed 
-                              ? 'bg-green-500 text-white' 
-                              : 'bg-gray-100 text-gray-600 group-hover:bg-[#4a154b] group-hover:text-white'
-                          } transition-all`}>
-                            {step.completed ? (
-                              <Check className="w-5 h-5" />
-                            ) : (
-                              <step.icon className="w-6 h-6" />
-                            )}
-                          </div>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className={`font-medium ${step.completed ? 'text-green-700' : 'text-gray-900 group-hover:text-[#4a154b]'} transition-colors`}>
-                              {step.title}
-                            </div>
-                            <div className="text-sm text-gray-500">{step.description}</div>
-                          </div>
-
-                          {/* Arrow */}
-                          {!step.completed && (
-                            <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-[#4a154b] transition-colors" />
-                          )}
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="absolute bottom-0 left-0 right-0 p-6 bg-white border-t border-gray-200">
-                <Link
-                  href="/settings/"
-                  className="block w-full px-4 py-3 bg-[#4a154b] text-white rounded-xl text-center font-medium hover:bg-[#5a2060] transition-colors"
-                  onClick={() => setShowQuickStart(false)}
-                >
-                  Go to Settings
-                </Link>
-              </div>
-            </div>
-          </div>
-
+          
           {/* Hero Section with Background */}
           <div className="relative">
             {/* Background Section - Only covers top portion */}

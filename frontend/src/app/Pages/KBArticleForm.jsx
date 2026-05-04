@@ -1,15 +1,19 @@
 import React, { useState } from 'react'
 import { Head, useForm, Link, router } from '@inertiajs/react'
 import toast from 'react-hot-toast'
+import api from '../../utils/axios'
 import AppShell from '../components/AppShell'
 import KBSidebar from '../components/KBSidebar'
 import Select from '../components/SearchableSelect'
-import Textarea from '../../components/Textarea'
+import RichEditor from '../components/RichEditor'
 import { THEME } from '../constants/theme'
-import { ArrowLeft, Info } from 'lucide-react'
+import { ArrowLeft, Info, Upload, X } from 'lucide-react'
 
 export default function KBArticleForm({ mode = 'add', article = {}, categories = [], errors: serverErrors = {}, sidebar = {}, kbSettings = {} }) {
   const [currentStep, setCurrentStep] = useState(1)
+  const [imagePreview, setImagePreview] = useState(article.display_image || null)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   
   // Default to 'pending' for new articles when require_approval is ON
   const defaultStatus = mode === 'add' && kbSettings.requireApproval ? 'pending' : (article.status || 'draft')
@@ -23,11 +27,52 @@ export default function KBArticleForm({ mode = 'add', article = {}, categories =
     status: defaultStatus,
     featured: article.featured || false,
     allow_comments: article.allow_comments !== undefined ? article.allow_comments : true,
+    display_image: article.display_image || '',
   })
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Preview the image immediately
+    const reader = new FileReader()
+    reader.onload = (e) => setImagePreview(e.target.result)
+    reader.readAsDataURL(file)
+
+    // Upload to server
+    setUploadingImage(true)
+    setUploadProgress(0)
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('category', 'kb-images')
+
+    try {
+      const response = await api.post('/upload/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          setUploadProgress(percent)
+        }
+      })
+      setData('display_image', response.data.file_url)
+      toast.success('Image uploaded successfully')
+    } catch (error) {
+      toast.error('Failed to upload image')
+      setImagePreview(null)
+    } finally {
+      setUploadingImage(false)
+      setUploadProgress(0)
+    }
+  }
+
+  const removeImage = () => {
+    setImagePreview(null)
+    setData('display_image', '')
+  }
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    const url = mode === 'add' ? '/knowledgebase/article/add/' : `/knowledgebase/article/${article.id}/update/`
+    const url = mode === 'add' ? '/knowledgebase/article/add/' : `/knowledgebase/article/${article.uuid}/update/`
     const successMsg = mode === 'add' ? 'Article created successfully!' : 'Article updated successfully!'
     
     toast.promise(
@@ -219,14 +264,66 @@ export default function KBArticleForm({ mode = 'add', article = {}, categories =
 
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Summary</label>
-                      <Textarea
+                      <textarea
                         value={data.summary}
                         onChange={(e) => setData('summary', e.target.value)}
                         rows={3}
-                        className="w-full"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
                         placeholder="Brief summary of the article (optional)"
                       />
                       <p className="text-xs text-gray-500 mt-1">A short description that appears in search results</p>
+                    </div>
+
+                    {/* Display Image */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Display Image</label>
+                      {imagePreview ? (
+                        <div className="relative inline-block">
+                          <img
+                            src={imagePreview}
+                            alt="Display preview"
+                            className="w-full max-w-md h-48 object-cover rounded-lg border border-gray-200"
+                          />
+                          <button
+                            type="button"
+                            onClick={removeImage}
+                            className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex flex-col items-center justify-center w-full max-w-md h-48 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-[#4a154b] hover:bg-gray-50 transition-colors">
+                          <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                            {uploadingImage ? (
+                              <div className="flex flex-col items-center">
+                                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#4a154b] mb-3"></div>
+                                <p className="text-sm text-gray-600">Uploading... {uploadProgress}%</p>
+                                <div className="w-48 bg-gray-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                                  <div
+                                    className="h-1.5 rounded-full bg-[#4a154b] transition-all duration-300"
+                                    style={{ width: `${uploadProgress}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <Upload className="w-10 h-10 text-gray-400 mb-3" />
+                                <p className="text-sm text-gray-600">Click to upload display image</p>
+                                <p className="text-xs text-gray-500 mt-1">PNG, JPG, GIF up to 5MB</p>
+                              </>
+                            )}
+                          </div>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                            className="hidden"
+                            disabled={uploadingImage}
+                          />
+                        </label>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">This image will be displayed as the article header</p>
                     </div>
                   </>
                 )}
@@ -238,15 +335,12 @@ export default function KBArticleForm({ mode = 'add', article = {}, categories =
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         Article Content* <span className="text-xs text-gray-500">(required)</span>
                       </label>
-                      <Textarea
+                      <RichEditor
                         value={data.content}
-                        onChange={(e) => setData('content', e.target.value)}
-                        rows={20}
-                        className="w-full font-mono text-sm"
-                        placeholder="Write your article content here. You can use Markdown formatting..."
+                        onChange={(html) => setData('content', html)}
+                        placeholder="Write your article content here..."
                       />
                       {allErrors?.content && <p className="mt-1 text-sm text-red-600">{allErrors.content}</p>}
-                      <p className="text-xs text-gray-500 mt-1">Supports Markdown formatting</p>
                     </div>
                   </>
                 )}

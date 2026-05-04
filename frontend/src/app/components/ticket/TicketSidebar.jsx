@@ -14,7 +14,8 @@ export default function TicketSidebar({
   groups = [], 
   attachments = [],
   onFieldUpdate,
-  onViewAttachments
+  onViewAttachments,
+  readOnly = false
 }) {
   const [editingField, setEditingField] = useState(null)
 
@@ -23,16 +24,23 @@ export default function TicketSidebar({
     setEditingField(null)
   }
 
+  const handleEditClick = (field) => {
+    if (!readOnly) setEditingField(field)
+  }
+
   return (
     <aside className="lg:col-span-1 space-y-4">
       {/* Description */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+      <div className="bg-white -sm border border-gray-200 p-4">
         <h3 className="font-semibold text-gray-900 mb-3">Description</h3>
-        <p className="text-sm text-gray-700 whitespace-pre-wrap">{ticket?.description}</p>
+        <div 
+          className="text-sm text-gray-700 prose prose-sm max-w-none"
+          dangerouslySetInnerHTML={{ __html: ticket?.description }}
+        />
       </div>
 
       {/* Details */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+      <div className="bg-white -sm border border-gray-200 p-4">
         <h3 className="font-semibold text-gray-900 mb-3">Details</h3>
         <dl className="space-y-3 text-sm">
           <div className="flex justify-between">
@@ -42,6 +50,28 @@ export default function TicketSidebar({
           <div className="flex justify-between">
             <dt className="text-gray-600">Updated:</dt>
             <dd className="text-gray-900 font-medium">{ticket?.updated_at}</dd>
+          </div>
+
+          {/* Channel/Source */}
+          <div className="flex justify-between items-center">
+            <dt className="text-gray-600">Channel:</dt>
+            <dd className="flex items-center gap-1.5">
+              {ticket?.channel ? (
+                <>
+                  <span 
+                    className="w-5 h-5 flex items-center justify-center rounded text-xs"
+                    style={{ backgroundColor: ticket.channel.icon_bg || '#f3f4f6', color: ticket.channel.icon_color || '#6b7280' }}
+                    dangerouslySetInnerHTML={{ __html: ticket.channel.icon || '🌐' }}
+                  />
+                  <span className="text-gray-900 font-medium">{ticket.channel.name}</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-5 h-5 flex items-center justify-center rounded bg-blue-100 text-blue-600 text-xs">🌐</span>
+                  <span className="text-gray-900 font-medium">{ticket?.source || 'Web'}</span>
+                </>
+              )}
+            </dd>
           </div>
 
           {/* Assignee */}
@@ -60,8 +90,8 @@ export default function TicketSidebar({
               />
             ) : (
               <dd
-                onClick={() => setEditingField('assignee')}
-                className="text-gray-900 font-medium cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
+                onClick={() => handleEditClick('assignee')}
+                className={`text-gray-900 font-medium ${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded`}
               >
                 {ticket?.assignee?.name || 'Unassigned'}
               </dd>
@@ -84,8 +114,8 @@ export default function TicketSidebar({
               />
             ) : (
               <dd
-                onClick={() => setEditingField('group')}
-                className="text-gray-900 font-medium cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
+                onClick={() => handleEditClick('group')}
+                className={`text-gray-900 font-medium ${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded`}
               >
                 {ticket?.group ? `👥 ${ticket.group.name}` : 'None'}
               </dd>
@@ -112,8 +142,8 @@ export default function TicketSidebar({
               />
             ) : (
               <dd
-                onClick={() => setEditingField('type')}
-                className="text-gray-900 font-medium cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
+                onClick={() => handleEditClick('type')}
+                className={`text-gray-900 font-medium ${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded`}
               >
                 {ticket?.type_display || 'Question'}
               </dd>
@@ -140,8 +170,8 @@ export default function TicketSidebar({
               />
             ) : (
               <dd
-                onClick={() => setEditingField('priority')}
-                className={`font-medium cursor-pointer hover:bg-gray-50 px-2 py-1 rounded ${priorityColors[ticket?.priority] || ''}`}
+                onClick={() => handleEditClick('priority')}
+                className={`font-medium ${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded ${priorityColors[ticket?.priority] || ''}`}
               >
                 {ticket?.priority_display || 'Normal'}
               </dd>
@@ -182,8 +212,8 @@ export default function TicketSidebar({
               </div>
             ) : (
               <dd
-                onClick={() => setEditingField('watchers')}
-                className="cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
+                onClick={() => handleEditClick('watchers')}
+                className={`${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded`}
               >
                 {ticket?.watchers && ticket.watchers.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
@@ -222,8 +252,8 @@ export default function TicketSidebar({
               />
             ) : (
               <dd
-                onClick={() => setEditingField('tags')}
-                className="cursor-pointer hover:bg-gray-50 px-2 py-1 rounded"
+                onClick={() => handleEditClick('tags')}
+                className={`${readOnly ? '' : 'cursor-pointer hover:bg-gray-50'} px-2 py-1 rounded`}
               >
                 {ticket?.tags && ticket.tags.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
@@ -244,7 +274,7 @@ export default function TicketSidebar({
 
       {/* Attachments Summary */}
       {attachments.length > 0 && (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div className="bg-white -sm border border-gray-200 p-4">
           <h3 className="font-semibold text-gray-900 mb-3">Attachments ({attachments.length})</h3>
           <div className="space-y-2">
             {attachments.slice(0, 3).map(att => (

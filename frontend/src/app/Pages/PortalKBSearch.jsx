@@ -91,11 +91,20 @@ export default function PortalKBSearch({ query, results, tenant_name }) {
                 <div className="grid grid-cols-1 gap-6">
                   {results.map((article) => (
                     <Link
-                      key={article.id}
-                      href={`/portal/kb/${article.id}/`}
-                      className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-all"
+                      key={article.uuid}
+                      href={`/portal/kb/${article.uuid}/`}
+                      className="bg-white -sm border border-gray-200 hover:shadow-md transition-all overflow-hidden flex"
                     >
-                      <div className="flex items-start justify-between gap-4">
+                      {article.display_image && (
+                        <div className="w-48 flex-shrink-0">
+                          <img
+                            src={article.display_image}
+                            alt={article.title}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                      <div className="p-6 flex-1 flex items-start justify-between gap-4">
                         <div className="flex-1">
                           <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
                             {article.title}
@@ -128,7 +137,7 @@ export default function PortalKBSearch({ query, results, tenant_name }) {
                   ))}
                 </div>
               ) : (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+                <div className="bg-white -sm border border-gray-200 p-12 text-center">
                   <div className="text-6xl mb-4">🔍</div>
                   <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
                     No Results Found
@@ -157,7 +166,7 @@ export default function PortalKBSearch({ query, results, tenant_name }) {
           )}
 
           {!query && (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+            <div className="bg-white -sm border border-gray-200 p-12 text-center">
               <div className="text-6xl mb-4">💡</div>
               <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
                 Start Your Search

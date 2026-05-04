@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import SettingsSidenav from '../components/SettingsSidenav'
 import UserViewModal from '../components/UserViewModal'
+import DataTable from '../../components/DataTable'
 import { THEME } from '../constants/theme'
 import { Eye, Pencil, Trash2 } from 'lucide-react'
 
@@ -70,90 +71,96 @@ export default function TeamUsers({ users = [], pagination = {}, orgs = [], grou
             </div>
 
             <div className="p-6">
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Groups</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organization</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {users.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
-                          No users found. <Link href="/settings/team/users/" className={THEME.link}>Add your first user</Link>
-                        </td>
-                      </tr>
-                    ) : (
-                      users.map((user) => (
-                        <tr key={user.id} className="hover:bg-gray-50">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
-                                {user.name.charAt(0)}
-                              </div>
-                              <span className="font-medium text-gray-900">{user.name}</span>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
-                          <td className="px-6 py-4">
-                            <span className="px-2 py-1 text-xs rounded-full bg-[#e6f0f1] text-[#4a154b]">
-                              {user.role}
+              <DataTable
+                data={users}
+                defaultPageSize={25}
+                columns={[
+                  {
+                    key: 'name',
+                    header: 'Name',
+                    render: (user) => (
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
+                          {user.name.charAt(0)}
+                        </div>
+                        <span className="font-medium text-gray-900">{user.name}</span>
+                      </div>
+                    ),
+                  },
+                  {
+                    key: 'email',
+                    header: 'Email',
+                    render: (user) => <span className="text-sm text-gray-600">{user.email}</span>,
+                  },
+                  {
+                    key: 'role',
+                    header: 'Role',
+                    render: (user) => (
+                      <span className="px-2 py-1 text-xs rounded-full bg-[#e6f0f1] text-[#4a154b]">
+                        {user.role}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'groups',
+                    header: 'Groups',
+                    sortable: false,
+                    render: (user) => (
+                      user.groups && user.groups.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {user.groups.map((group) => (
+                            <span 
+                              key={group.id} 
+                              className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 border border-gray-300"
+                            >
+                              {group.name}
                             </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            {user.groups && user.groups.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {user.groups.map((group) => (
-                                  <span 
-                                    key={group.id} 
-                                    className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-700 border border-gray-300"
-                                  >
-                                    {group.name}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-sm text-gray-400">—</span>
-                            )}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">{user.organization || '—'}</td>
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleViewUser(user.id)}
-                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-[#4a154b]"
-                                title="View"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                              <Link 
-                                href={`/settings/team/users/${user.id}/edit/`}
-                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600"
-                                title="Edit"
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </Link>
-                              <button 
-                                onClick={() => handleDelete(user.id, user.name)}
-                                className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-600"
-                                title="Delete"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">—</span>
+                      )
+                    ),
+                  },
+                  {
+                    key: 'organization',
+                    header: 'Organization',
+                    render: (user) => <span className="text-sm text-gray-600">{user.organization || '—'}</span>,
+                  },
+                  {
+                    key: 'actions',
+                    header: 'Actions',
+                    sortable: false,
+                    hideable: false,
+                    render: (user) => (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleViewUser(user.id); }}
+                          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-[#4a154b]"
+                          title="View"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <Link 
+                          href={`/settings/team/users/${user.id}/edit/`}
+                          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-blue-600"
+                          title="Edit"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Link>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDelete(user.id, user.name); }}
+                          className="p-1.5 rounded hover:bg-gray-100 text-gray-500 hover:text-red-600"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             </div>
           </main>
         </div>

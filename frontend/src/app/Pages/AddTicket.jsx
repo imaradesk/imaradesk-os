@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react'
-import { Head, useForm, Link } from '@inertiajs/react'
+import React, { useEffect, useState, useCallback } from 'react'
+import { Head, useForm, Link, router } from '@inertiajs/react'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import Select from '../components/SearchableSelect'
+import RichEditor from '../components/RichEditor'
 import TicketStatusStepper from '../components/TicketStatusStepper'
 import { csrfFetch } from '../../utils/csrf'
 import { THEME } from '../constants/theme'
 
-export default function AddTicket({ users = [], departments = [], groups = [], currentUser = null }) {
+export default function AddTicket({ users = [], departments = [], groups = [], channels = [], currentUser = null, webChannelActive = true }) {
+  // Get the default 'web' channel from database
+  const defaultChannel = channels.find(c => c.channel_id === 'web') || channels[0]
+  
   const { data, setData, post, processing, errors } = useForm({
     title: '',
     description: '',
@@ -17,6 +21,7 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
     priority: 'normal',
     group: '',
     status: 'new',
+    channel: defaultChannel?.channel_id || 'web',
     tags: '[]',
     watchers: '[]',
     is_guest_ticket: false,
@@ -32,7 +37,8 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
   const [requestOnBehalf, setRequestOnBehalf] = useState(false)
   const [isGuestTicket, setIsGuestTicket] = useState(false)
 
-  // Set requester to current user by default
+
+  // Set requester to current user by default when not requesting on behalf
   useEffect(() => {
     if (currentUser && !requestOnBehalf) {
       setData('requester', currentUser.id)
@@ -86,6 +92,12 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
 
   const handleSubmit = (e) => {
     e.preventDefault()
+    
+    // Check if web channel is active
+    if (!webChannelActive) {
+      toast.error('Web channel is inactive. Ticket creation is not allowed.')
+      return
+    }
     
     // Validate required fields
     if (!data.title || !data.description) {
@@ -165,6 +177,7 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
   return (
     <>
       <Head title="Add Ticket" />
+
       <AppShell active="tickets">
         <main className="flex-1 bg-gray-50">
           {/* Header */}
@@ -175,17 +188,19 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
                 <p className="text-sm text-gray-600 mt-1">Fill in the details below to create a support ticket</p>
               </div>
               <div className="flex items-center gap-3">
-                <Link
-                  href="/tickets/"
+                <button
+                  type="button"
+                  onClick={() => router.visit('/tickets/')}
                   className="px-6 py-2.5 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors font-medium"
                 >
                   Cancel
-                </Link>
+                </button>
                 <button
                   type="submit"
-                  disabled={processing}
+                  disabled={processing || !webChannelActive}
                   onClick={handleSubmit}
                   className="px-6 py-2.5 bg-[#4a154b] text-white rounded-md hover:bg-[#0a2f33] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={!webChannelActive ? 'Web channel is inactive' : ''}
                 >
                   {processing ? 'Creating...' : 'Create Ticket'}
                 </button>
@@ -197,6 +212,26 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
           <div className="bg-white border-b border-gray-200 px-6 py-4">
             <TicketStatusStepper currentStatus="new" />
           </div>
+
+          {/* Web Channel Inactive */}
+          {!webChannelActive && (
+            <div className="mx-6 mt-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div className="flex-1">
+                  <h3 className="text-sm font-medium text-amber-800">Web Channel Inactive</h3>
+                  <p className="text-sm text-amber-700 mt-1">
+                    This channel is inactive. Go to settings to activate it.{' '}
+                    <Link href="/administration/channels/" className="font-medium underline hover:text-amber-900">
+                      Activate now
+                    </Link>
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="h-[calc(100vh-180px)]">
@@ -226,14 +261,12 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Description <span className="text-red-500">*</span>
                     </label>
-                    <textarea
+                    <RichEditor
                       value={data.description}
-                      onChange={e => setData('description', e.target.value)}
-                      className="flex-1 w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent font-mono text-sm resize-none"
+                      onChange={(html) => setData('description', html)}
                       placeholder="Detailed description of the issue..."
                     />
                     {errors.description && <p className="text-sm text-red-600 mt-1">{errors.description}</p>}
-                    <p className="text-xs text-gray-500 mt-1">Use Markdown formatting if needed</p>
                   </div>
 
                   {/* File Attachments */}
@@ -536,6 +569,36 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
                       searchable={true}
                     />
                   </div>
+
+                  {/* Channel */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Channel
+                    </label>
+                    <div 
+                      className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-md bg-gray-100 text-gray-600"
+                      title={defaultChannel?.name || 'Web'}
+                    >
+                      {defaultChannel ? (
+                        <>
+                          <span 
+                            className="w-5 h-5 flex items-center justify-center rounded text-xs"
+                            style={{ backgroundColor: defaultChannel.icon_bg, color: defaultChannel.icon_color }}
+                          >
+                            🌐
+                          </span>
+                          <span>{defaultChannel.name}</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                          </svg>
+                          <span>Web</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -586,22 +649,47 @@ export default function AddTicket({ users = [], departments = [], groups = [], c
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">Watchers</h3>
                 <p className="text-sm text-gray-600 mb-3">Select users to receive notifications</p>
                 
-                <div className="grid grid-cols-1 gap-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md p-3">
-                  {users.map(user => (
-                    <label
-                      key={user.id}
-                      className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedWatchers.includes(user.id)}
-                        onChange={() => toggleWatcher(user.id)}
-                        className="rounded border-gray-300 text-[#4a154b] focus:ring-[#4a154b]"
-                      />
-                      <span className="text-sm">{user.name}</span>
-                    </label>
-                  ))}
-                </div>
+                <Select
+                  value=""
+                  onChange={(userId) => {
+                    if (userId && !selectedWatchers.includes(userId)) {
+                      toggleWatcher(userId)
+                    }
+                  }}
+                  options={users.filter(u => !selectedWatchers.includes(u.id))}
+                  placeholder="Add watcher..."
+                  displayKey="name"
+                  valueKey="id"
+                  searchable={true}
+                />
+                
+                {selectedWatchers.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {selectedWatchers.map(watcherId => {
+                      const user = users.find(u => u.id === watcherId)
+                      if (!user) return null
+                      return (
+                        <span
+                          key={watcherId}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-purple-100 text-purple-800 rounded-full text-sm"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          {user.name}
+                          <button
+                            type="button"
+                            onClick={() => toggleWatcher(watcherId)}
+                            className="ml-1 hover:text-purple-900"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>

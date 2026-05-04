@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Head, Link, router, useForm } from '@inertiajs/react'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
+import DataTable from '../../components/DataTable'
 import { THEME } from '../constants/theme'
 
 export default function People({ activeTab = 'users', users = [], pagination = {}, orgs = [], roles = [], groups = [], permissions = {} }) {
@@ -419,128 +420,64 @@ export default function People({ activeTab = 'users', users = [], pagination = {
           {/* Users Tab */}
           {activeTab === 'users' && (
           <div className="p-6">
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organization</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tickets</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {loading ? (
-                    [...Array(10)].map((_, i) => (
-                      <tr key={`sk-${i}`}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-gray-200 animate-pulse" />
-                            <div className="h-5 w-32 bg-gray-200 rounded animate-pulse" />
-                          </div>
-                        </td>
-                        <td className="px-6 py-4"><div className="h-5 w-40 bg-gray-200 rounded animate-pulse" /></td>
-                        <td className="px-6 py-4"><div className="h-6 w-16 bg-gray-200 rounded-full animate-pulse" /></td>
-                        <td className="px-6 py-4"><div className="h-5 w-24 bg-gray-200 rounded animate-pulse" /></td>
-                        <td className="px-6 py-4"><div className="h-5 w-8 bg-gray-200 rounded animate-pulse" /></td>
-                        <td className="px-6 py-4"><div className="h-5 w-12 bg-gray-200 rounded animate-pulse" /></td>
-                      </tr>
-                    ))
-                  ) : users.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
-                        No users found. <Link href="/people/add/" className={THEME.link}>Add your first user</Link>
-                      </td>
-                    </tr>
-                  ) : (
-                    users.map((user) => (
-                      <tr key={user.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
-                              {user.name.charAt(0)}
-                            </div>
-                            <span className="font-medium text-gray-900">{user.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-1 text-xs rounded-full bg-[#e6f0f1] text-[#4a154b]">
-                            {user.role}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{user.organization || '—'}</td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{user.tickets}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <Link href={`/people/${user.id}/permissions/`} className={`text-sm ${THEME.link}`}>Permissions</Link>
-                            <Link href={`/people/${user.id}/edit/`} className="text-sm text-blue-600 hover:text-blue-700">Edit</Link>
-                            <button onClick={() => handleDelete(user.id)} className="text-sm text-red-600 hover:text-red-700">Delete</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              
-              {/* Pagination */}
-              {!loading && totalPages > 1 && (
-                <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                  <div className="text-sm text-gray-600">
-                    Page {currentPage} of {totalPages}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handlePageChange(currentPage - 1)}
-                      disabled={!hasPrev}
-                      className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Previous
-                    </button>
-                    
-                    <div className="flex items-center gap-1">
-                      {[...Array(totalPages)].map((_, i) => {
-                        const page = i + 1
-                        const isNearCurrent = Math.abs(page - currentPage) <= 2
-                        const isFirstOrLast = page === 1 || page === totalPages
-                        
-                        if (!isNearCurrent && !isFirstOrLast) {
-                          if (page === 2 || page === totalPages - 1) {
-                            return <span key={page} className="px-2 text-gray-400">…</span>
-                          }
-                          return null
-                        }
-                        
-                        return (
-                          <button
-                            key={page}
-                            onClick={() => handlePageChange(page)}
-                            className={`px-3 py-1.5 rounded-md text-sm ${
-                              page === currentPage
-                                ? 'bg-blue-600 text-white'
-                                : 'text-gray-700 hover:bg-gray-100'
-                            }`}
-                          >
-                            {page}
-                          </button>
-                        )
-                      })}
+            <DataTable
+              data={users}
+              loading={loading}
+              defaultPageSize={25}
+              serverPagination={totalPages > 1 ? { count: totalCount, pages: totalPages, page: currentPage } : null}
+              onPageChange={(page) => handlePageChange(page)}
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  render: (user) => (
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
+                        {user.name.charAt(0)}
+                      </div>
+                      <span className="font-medium text-gray-900">{user.name}</span>
                     </div>
-                    
-                    <button
-                      onClick={() => handlePageChange(currentPage + 1)}
-                      disabled={!hasNext}
-                      className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+                  ),
+                },
+                {
+                  key: 'email',
+                  header: 'Email',
+                  render: (user) => <span className="text-sm text-gray-600">{user.email}</span>,
+                },
+                {
+                  key: 'role',
+                  header: 'Role',
+                  render: (user) => (
+                    <span className="px-2 py-1 text-xs rounded-full bg-[#e6f0f1] text-[#4a154b]">
+                      {user.role}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'organization',
+                  header: 'Organization',
+                  render: (user) => <span className="text-sm text-gray-600">{user.organization || '—'}</span>,
+                },
+                {
+                  key: 'tickets',
+                  header: 'Tickets',
+                  render: (user) => <span className="text-sm text-gray-600">{user.tickets}</span>,
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  sortable: false,
+                  hideable: false,
+                  render: (user) => (
+                    <div className="flex items-center gap-3">
+                      <Link href={`/people/${user.id}/permissions/`} className={`text-sm ${THEME.link}`} onClick={(e) => e.stopPropagation()}>Permissions</Link>
+                      <Link href={`/people/${user.id}/edit/`} className="text-sm text-blue-600 hover:text-blue-700" onClick={(e) => e.stopPropagation()}>Edit</Link>
+                      <button onClick={(e) => { e.stopPropagation(); handleDelete(user.id); }} className="text-sm text-red-600 hover:text-red-700">Delete</button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
           )}
 
@@ -599,55 +536,53 @@ export default function People({ activeTab = 'users', users = [], pagination = {
           {/* Groups Tab */}
           {activeTab === 'groups' && (
           <div className="p-6">
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Members</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {groups.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="px-6 py-12 text-center text-gray-500">
-                        No groups found. <button onClick={openCreateGroupDrawer} className={THEME.link}>Create your first group</button>
-                      </td>
-                    </tr>
-                  ) : (
-                    groups.map((group) => (
-                      <tr key={group.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
-                              {group.name.charAt(0)}
-                            </div>
-                            <span className="font-medium text-gray-900">{group.name}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{group.description || '—'}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                            </svg>
-                            <span>{group.member_count || 0}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <button onClick={() => openEditGroupDrawer(group)} className="text-sm text-blue-600 hover:text-blue-700">Edit</button>
-                            <button onClick={() => handleGroupDelete(group.id)} className="text-sm text-red-600 hover:text-red-700">Delete</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              data={groups}
+              defaultPageSize={25}
+              columns={[
+                {
+                  key: 'name',
+                  header: 'Name',
+                  render: (group) => (
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-[#e6f0f1] text-[#4a154b] flex items-center justify-center font-semibold text-sm">
+                        {group.name.charAt(0)}
+                      </div>
+                      <span className="font-medium text-gray-900">{group.name}</span>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'description',
+                  header: 'Description',
+                  render: (group) => <span className="text-sm text-gray-600">{group.description || '—'}</span>,
+                },
+                {
+                  key: 'member_count',
+                  header: 'Members',
+                  render: (group) => (
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                      </svg>
+                      <span>{group.member_count || 0}</span>
+                    </div>
+                  ),
+                },
+                {
+                  key: 'actions',
+                  header: 'Actions',
+                  sortable: false,
+                  hideable: false,
+                  render: (group) => (
+                    <div className="flex items-center gap-3">
+                      <button onClick={(e) => { e.stopPropagation(); openEditGroupDrawer(group); }} className="text-sm text-blue-600 hover:text-blue-700">Edit</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleGroupDelete(group.id); }} className="text-sm text-red-600 hover:text-red-700">Delete</button>
+                    </div>
+                  ),
+                },
+              ]}
+            />
           </div>
           )}
 

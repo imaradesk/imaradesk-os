@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
+import api from '../../utils/axios';
 import { THEME, COLORS } from '../constants/theme';
 
 export default function CustomerPortalSurveys({ portal_settings, business_type, questions = [], survey_submitted = false }) {
@@ -38,21 +39,12 @@ export default function CustomerPortalSurveys({ portal_settings, business_type, 
     setSubmitting(true);
 
     try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-      
-      const response = await fetch('/portal/surveys/submit/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify({
-          business_type: business_type,
-          responses: responses
-        })
+      const response = await api.post('/portal/surveys/submit/', {
+        business_type: business_type,
+        responses: responses
       });
 
-      if (response.ok) {
+      if (response.status === 200) {
         router.reload();
       }
     } catch (error) {

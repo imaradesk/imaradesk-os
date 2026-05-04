@@ -167,6 +167,12 @@ class EmailTemplate(models.Model):
         ('welcome_user', 'Welcome Email'),
         ('password_reset', 'Password Reset'),
         
+        # KB templates
+        ('kb_article_published', 'KB Article Published'),
+        ('kb_article_updated', 'KB Article Updated'),
+        ('kb_article_approved', 'KB Article Approved'),
+        ('kb_article_rejected', 'KB Article Rejected'),
+        
         # Report templates
         ('weekly_report', 'Weekly Report'),
         
@@ -526,6 +532,42 @@ class NotificationSettings(models.Model):
         help_text="When someone is mentioned using @username in a ticket"
     )
     
+    # KB Notifications
+    notify_kb_article_published = models.BooleanField(
+        default=False,
+        help_text="When a knowledge base article is published"
+    )
+    notify_kb_article_updated = models.BooleanField(
+        default=False,
+        help_text="When a knowledge base article is updated"
+    )
+    notify_kb_feedback_received = models.BooleanField(
+        default=False,
+        help_text="When feedback is received on a knowledge base article"
+    )
+    notify_kb_article_approved = models.BooleanField(
+        default=False,
+        help_text="When a knowledge base article is approved"
+    )
+    
+    # SLA Notifications
+    notify_sla_response_warning = models.BooleanField(
+        default=False,
+        help_text="When a ticket is approaching first response SLA breach"
+    )
+    notify_sla_response_breached = models.BooleanField(
+        default=False,
+        help_text="When a ticket has breached first response SLA"
+    )
+    notify_sla_resolution_warning = models.BooleanField(
+        default=False,
+        help_text="When a ticket is approaching resolution SLA breach"
+    )
+    notify_sla_resolution_breached = models.BooleanField(
+        default=False,
+        help_text="When a ticket has breached resolution SLA"
+    )
+    
     # Reports
     weekly_performance_report = models.BooleanField(
         default=False,
@@ -561,4 +603,74 @@ class NotificationSettings(models.Model):
         """Get or create the notification settings instance"""
         settings, created = cls.objects.get_or_create(pk=1)
         return settings
+
+
+class Channel(models.Model):
+    """
+    Communication channels available for inboxes.
+    """
+
+    CHANNEL_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('coming_soon', 'Coming Soon'),
+    ]
+
+    channel_id = models.CharField(max_length=50, unique=True, help_text="Unique channel identifier (e.g., 'email', 'slack')")
+    name = models.CharField(max_length=100, help_text="Display name")
+    description = models.TextField(help_text="Channel description")
+    icon = models.CharField(max_length=50, help_text="Icon name")
+    icon_bg = models.CharField(max_length=20, default='#f3f4f6', help_text="Icon background color")
+    icon_color = models.CharField(max_length=20, default='#6b7280', help_text="Icon color")
+    is_activated = models.BooleanField(default=True, help_text="Whether the channel is enabled")
+    status = models.CharField(max_length=20, choices=CHANNEL_STATUS_CHOICES, default='active', help_text="Channel availability status")
+    is_connected = models.BooleanField(default=False, help_text="Whether the channel has been configured/connected")
+    inbox_count = models.PositiveIntegerField(default=0, help_text="Number of inboxes using this channel")
+    order = models.PositiveIntegerField(default=0, help_text="Display order")
+    config = models.JSONField(default=dict, blank=True, help_text="Channel-specific configuration")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Channel"
+        verbose_name_plural = "Channels"
+        ordering = ['order', 'name']
+        db_table = 'conf_channels'
+
+    def __str__(self):
+        return f"{self.name} ({'Active' if self.is_activated else 'Disabled'})"
+
+    @classmethod
+    def seed_default_channels(cls):
+        """Sync default channels. Creates new, updates existing, deletes removed."""
+        from shared.utilities.enums.channels import ChannelsRegistry
+
+        created_count = 0
+        updated_count = 0
+        deleted_count = 0
+
+        default_channels = ChannelsRegistry.get_all_channels()
+        valid_ids = ChannelsRegistry.get_all_channel_ids()
+
+        orphaned = cls.objects.exclude(channel_id__in=valid_ids)
+        deleted_count = orphaned.count()
+        orphaned.delete()
+
+        for ch_data in default_channels:
+            channel, created = cls.objects.get_or_create(
+                channel_id=ch_data['channel_id'],
+                defaults=ch_data,
+            )
+            if created:
+                created_count += 1
+            else:
+                changed = False
+                for field in ('name', 'description', 'icon', 'icon_bg', 'icon_color', 'status', 'order'):
+                    if getattr(channel, field) != ch_data[field]:
+                        setattr(channel, field, ch_data[field])
+                        changed = True
+                if changed:
+                    channel.save()
+                    updated_count += 1
+
+        return created_count, updated_count, deleted_count
 

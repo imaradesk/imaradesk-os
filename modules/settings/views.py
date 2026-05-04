@@ -146,6 +146,16 @@ def notifications_settings(request):
             'notify_ticket_group_assigned': settings.notify_ticket_group_assigned,
             'notify_ticket_merged': settings.notify_ticket_merged,
             'notify_ticket_mentioned': settings.notify_ticket_mentioned,
+            # KB Notifications
+            'notify_kb_article_published': settings.notify_kb_article_published,
+            'notify_kb_article_updated': settings.notify_kb_article_updated,
+            'notify_kb_feedback_received': settings.notify_kb_feedback_received,
+            'notify_kb_article_approved': settings.notify_kb_article_approved,
+            # SLA Notifications
+            'notify_sla_response_warning': settings.notify_sla_response_warning,
+            'notify_sla_response_breached': settings.notify_sla_response_breached,
+            'notify_sla_resolution_warning': settings.notify_sla_resolution_warning,
+            'notify_sla_resolution_breached': settings.notify_sla_resolution_breached,
             # Reports
             'weekly_performance_report': settings.weekly_performance_report,
             'weekly_report_email': settings.weekly_report_email or request.user.email,
@@ -175,6 +185,16 @@ def notifications_settings_update(request):
             'notify_ticket_group_assigned',
             'notify_ticket_merged',
             'notify_ticket_mentioned',
+            # KB
+            'notify_kb_article_published',
+            'notify_kb_article_updated',
+            'notify_kb_feedback_received',
+            'notify_kb_article_approved',
+            # SLA
+            'notify_sla_response_warning',
+            'notify_sla_response_breached',
+            'notify_sla_resolution_warning',
+            'notify_sla_resolution_breached',
             'weekly_performance_report',
         ]
         
@@ -808,13 +828,6 @@ def team_user_view(request, user_id):
         })
     except (User.DoesNotExist, UserProfile.DoesNotExist):
         return JsonResponse({'error': 'User not found'}, status=404)
-
-
-@login_required
-@inertia('TeamImport')
-def team_import(request):
-    """Team import page."""
-    return {}
 
 
 # Team Users CRUD
@@ -1980,3 +1993,335 @@ def set_default_view(request, view_id):
             'success': False,
             'message': f'Failed to set default view: {str(e)}',
         }, status=500)
+
+
+# =============================================================================
+# CHANNELS
+# =============================================================================
+
+@login_required
+@inertia('Channels')
+def channels_settings(request):
+    """Channels configuration page."""
+    from .models import Channel
+
+    # Seed default channels if none exist
+    if not Channel.objects.exists():
+        Channel.seed_default_channels()
+
+    channels = list(Channel.objects.all().values(
+        'id', 'channel_id', 'name', 'description', 'icon', 'icon_bg',
+        'icon_color', 'is_activated', 'status', 'is_connected', 'inbox_count', 'order', 'config',
+    ))
+
+    # Enrich email channel with connected provider info
+    try:
+        from modules.email_to_ticket.models import CustomIMAPMailbox
+        imap_count = CustomIMAPMailbox.objects.filter(is_active=True).count()
+        for ch in channels:
+            if ch['channel_id'] == 'email':
+                ch['connected_providers'] = []
+                if imap_count > 0:
+                    ch['connected_providers'].append({'id': 'imap', 'name': 'Custom IMAP', 'count': imap_count})
+                    ch['is_connected'] = True
+                break
+    except Exception:
+        pass
+
+    return {
+        'activeSection': 'channels',
+        'channels': channels,
+    }
+
+
+@login_required
+@require_http_methods(["POST"])
+def channel_toggle(request, channel_id):
+    """Toggle a channel's is_activated state."""
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    if channel.status == 'coming_soon':
+        return JsonResponse({'success': False, 'message': 'This channel is not yet available'}, status=400)
+
+    channel.is_activated = not channel.is_activated
+    channel.save(update_fields=['is_activated', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'is_activated': channel.is_activated,
+        'message': f'{channel.name} {"activated" if channel.is_activated else "deactivated"} successfully',
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def channel_config(request, channel_id):
+    """Update a channel's configuration settings."""
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    try:
+        data = json.loads(request.body)
+        config = data.get('config', {})
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'message': 'Invalid JSON'}, status=400)
+
+    existing_config = channel.config or {}
+    existing_config.update(config)
+    channel.config = existing_config
+    channel.save(update_fields=['config', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'channel': {
+            'id': channel.id,
+            'channel_id': channel.channel_id,
+            'name': channel.name,
+            'config': channel.config,
+        },
+        'message': f'{channel.name} settings updated successfully',
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def channel_regenerate_key(request, channel_id):
+    """Regenerate API key for the API channel."""
+    import secrets
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    if channel.channel_id != 'api':
+        return JsonResponse({'success': False, 'message': 'API key can only be regenerated for API channel'}, status=400)
+
+    new_api_key = f"sk_live_{secrets.token_hex(24)}"
+
+    config = channel.config or {}
+    config['api_key'] = new_api_key
+    channel.config = config
+    channel.save(update_fields=['config', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'api_key': new_api_key,
+        'message': 'API key regenerated successfully',
+    })
+
+
+# =============================================================================
+# EMAIL INTEGRATION (IMAP)
+# =============================================================================
+
+@login_required
+@inertia('EmailProviderSetup')
+def email_imap_setup(request):
+    """Email IMAP provider setup page."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    is_connected = False
+    connected_mailboxes = []
+
+    mailboxes = CustomIMAPMailbox.objects.filter(is_active=True)
+    if mailboxes.exists():
+        is_connected = True
+        connected_mailboxes = [
+            {
+                'id': mb.id,
+                'email': mb.email_address,
+                'display_name': mb.display_name,
+                'imap_host': mb.imap_host,
+                'connected_at': mb.created_at.isoformat() if mb.created_at else None,
+                'last_checked': mb.last_sync_at.isoformat() if mb.last_sync_at else None,
+            }
+            for mb in mailboxes
+        ]
+
+    return {
+        'title': 'Custom IMAP/SMTP Integration',
+        'provider_id': 'imap',
+        'is_connected': is_connected,
+        'config': {},
+        'connected_mailboxes': connected_mailboxes,
+    }
+
+
+@login_required
+@require_http_methods(["POST"])
+def custom_imap_connect(request):
+    """Connect a custom IMAP mailbox."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        data = request.POST
+
+    email_addr = data.get('email', '')
+    password = data.get('password', '')
+    imap_host = data.get('imap_host', '')
+    imap_port = int(data.get('imap_port', 993))
+    enable_smtp = data.get('enable_smtp', False)
+    smtp_host = data.get('smtp_host', '')
+    smtp_port = int(data.get('smtp_port', 587))
+    use_ssl = data.get('use_ssl', True)
+
+    if not all([email_addr, password, imap_host]):
+        return JsonResponse({'success': False, 'error': 'Email, password, and IMAP host are required'})
+
+    if enable_smtp and not smtp_host:
+        return JsonResponse({'success': False, 'error': 'SMTP host is required when outgoing email is enabled'})
+
+    # Test IMAP connection
+    import imaplib
+    import ssl as ssl_module
+
+    try:
+        if use_ssl:
+            context = ssl_module.create_default_context()
+            mail = imaplib.IMAP4_SSL(imap_host, imap_port, ssl_context=context)
+        else:
+            mail = imaplib.IMAP4(imap_host, imap_port)
+        mail.login(email_addr, password)
+        mail.select('INBOX')
+        mail.logout()
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': f'IMAP connection failed: {str(e)}'})
+
+    mailbox, created = CustomIMAPMailbox.objects.update_or_create(
+        email_address=email_addr,
+        defaults={
+            'display_name': email_addr.split('@')[0],
+            'imap_host': imap_host,
+            'imap_port': imap_port,
+            'imap_use_ssl': use_ssl,
+            'enable_smtp': enable_smtp,
+            'smtp_host': smtp_host if enable_smtp else '',
+            'smtp_port': smtp_port,
+            'smtp_use_tls': smtp_port == 587 and enable_smtp,
+            'smtp_use_ssl': smtp_port == 465 and enable_smtp,
+            'username': email_addr,
+            'password': password,
+            'is_active': True,
+        }
+    )
+
+    return JsonResponse({
+        'success': True,
+        'message': f'Mailbox {"connected" if created else "updated"} successfully',
+        'mailbox_id': mailbox.id,
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def custom_imap_configure(request):
+    """Configure custom IMAP mailbox settings."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    auto_create_tickets = request.POST.get('auto_create_tickets', 'true') == 'true'
+    auto_reply = request.POST.get('auto_reply', 'false') == 'true'
+    default_priority = request.POST.get('default_priority', 'normal')
+    folder_to_watch = request.POST.get('folder_to_watch', 'INBOX')
+
+    mailboxes = CustomIMAPMailbox.objects.filter(is_active=True)
+    mailboxes.update(
+        auto_create_tickets=auto_create_tickets,
+        auto_reply=auto_reply,
+        default_priority=default_priority,
+        folder_to_watch=folder_to_watch,
+    )
+
+    from django.shortcuts import redirect
+    return redirect('email_imap_setup')
+
+
+@login_required
+@require_http_methods(["POST"])
+def custom_imap_disconnect(request):
+    """Disconnect a custom IMAP mailbox."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    try:
+        data = json.loads(request.body)
+        mailbox_id = data.get('mailbox_id')
+    except json.JSONDecodeError:
+        mailbox_id = request.POST.get('mailbox_id')
+
+    if not mailbox_id:
+        return JsonResponse({'status': 'error', 'message': 'mailbox_id required'}, status=400)
+
+    mailbox = CustomIMAPMailbox.objects.filter(id=mailbox_id).first()
+    if not mailbox:
+        return JsonResponse({'status': 'error', 'message': 'Mailbox not found'}, status=404)
+
+    email_addr = mailbox.email_address
+    mailbox.delete()
+
+    return JsonResponse({
+        'status': 'success',
+        'message': f'Mailbox {email_addr} disconnected'
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def custom_imap_test(request):
+    """Test custom IMAP mail connection."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    mailbox = CustomIMAPMailbox.objects.filter(is_active=True).first()
+    if not mailbox:
+        return JsonResponse({'success': False, 'error': 'No connected mailbox found'})
+
+    success, message = mailbox.test_connection()
+
+    if success:
+        return JsonResponse({
+            'success': True,
+            'message': f'Connection successful to {mailbox.email_address}'
+        })
+    else:
+        return JsonResponse({'success': False, 'error': message})
+
+
+@login_required
+def custom_imap_list_mailboxes(request):
+    """List connected custom IMAP mailboxes."""
+    from modules.email_to_ticket.models import CustomIMAPMailbox
+
+    mailboxes = CustomIMAPMailbox.objects.all().order_by('-created_at')
+
+    mailboxes_data = [
+        {
+            'id': mb.id,
+            'email_address': mb.email_address,
+            'display_name': mb.display_name,
+            'imap_host': mb.imap_host,
+            'smtp_host': mb.smtp_host,
+            'is_active': mb.is_active,
+            'auto_create_tickets': mb.auto_create_tickets,
+            'folder_to_watch': mb.folder_to_watch,
+            'last_sync_at': mb.last_sync_at.isoformat() if mb.last_sync_at else None,
+            'created_at': mb.created_at.isoformat() if mb.created_at else None,
+        }
+        for mb in mailboxes
+    ]
+
+    return JsonResponse({
+        'status': 'success',
+        'mailboxes': mailboxes_data,
+        'count': len(mailboxes_data),
+    })

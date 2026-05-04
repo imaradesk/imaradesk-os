@@ -37,7 +37,6 @@ urlpatterns = [
     path('settings/team/groups/<int:group_id>/delete/', views.team_group_delete, name='team_group_delete'),
     path('settings/team/groups/<int:group_id>/available-agents/', views.team_group_available_agents, name='team_group_available_agents'),
     path('settings/team/groups/<int:group_id>/add-members/', views.team_group_add_members, name='team_group_add_members'),
-    path('settings/team/import/', views.team_import, name='team_import'),
     # Emails section
     path('settings/emails/templates/', views.emails_templates, name='emails_templates'),
     path('settings/emails/templates/<int:template_id>/edit/', views.edit_email_template, name='edit_email_template'),
@@ -57,4 +56,18 @@ urlpatterns = [
     path('settings/sla/policies/', views.sla_policies, name='sla_policies'),
     path('settings/sla/policies/add/', views.sla_policy_add, name='sla_policy_add'),
     path('settings/sla/policies/<int:policy_id>/edit/', views.sla_policy_edit, name='sla_policy_edit'),
+
+    # Channels
+    path('settings/channels/', views.channels_settings, name='channels_settings'),
+    path('api/channels/<int:channel_id>/toggle/', views.channel_toggle, name='channel_toggle'),
+    path('api/channels/<int:channel_id>/config/', views.channel_config, name='channel_config'),
+    path('api/channels/<int:channel_id>/regenerate-key/', views.channel_regenerate_key, name='channel_regenerate_key'),
+
+    # Email Integration (IMAP)
+    path('administration/integrations/email/imap/', views.email_imap_setup, name='email_imap_setup'),
+    path('api/integrations/custom-imap/connect/', views.custom_imap_connect, name='custom_imap_connect'),
+    path('api/integrations/custom-imap/configure/', views.custom_imap_configure, name='custom_imap_configure'),
+    path('api/integrations/custom-imap/disconnect/', views.custom_imap_disconnect, name='custom_imap_disconnect'),
+    path('api/integrations/custom-imap/test/', views.custom_imap_test, name='custom_imap_test'),
+    path('api/integrations/custom-imap/mailboxes/', views.custom_imap_list_mailboxes, name='custom_imap_list_mailboxes'),
 ]

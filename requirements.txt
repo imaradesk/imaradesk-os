@@ -1,6 +1,6 @@
 Django==5.0.2
 inertia-django
-psycopg2-binary==2.9.9
+# psycopg2-binary==2.9.9  # PostgreSQL (uncomment if using PostgreSQL)
 python-decouple==3.8
 whitenoise==6.6.0
 gunicorn==22.0.0

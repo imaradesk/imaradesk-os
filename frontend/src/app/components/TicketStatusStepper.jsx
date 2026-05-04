@@ -3,6 +3,7 @@ import React from 'react'
 const TicketStatusStepper = ({ currentStatus }) => {
   const statuses = [
     { id: 'new', label: 'New' },
+    { id: 'open', label: 'Open' },
     { id: 'in_progress', label: 'In Progress' },
     { id: 'pending', label: 'On Hold' },
     { id: 'resolved', label: 'Resolved' },
@@ -11,11 +12,11 @@ const TicketStatusStepper = ({ currentStatus }) => {
 
   const statusOrder = {
     new: 0,
-    open: 0,
-    in_progress: 1,
-    pending: 2,
-    resolved: 3,
-    closed: 4,
+    open: 1,
+    in_progress: 2,
+    pending: 3,
+    resolved: 4,
+    closed: 5,
   }
 
   const currentIndex = statusOrder[currentStatus] ?? 0

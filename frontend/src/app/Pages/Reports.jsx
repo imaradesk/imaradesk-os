@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Head, router } from '@inertiajs/react'
 import AppShell from '../components/AppShell'
+import DataTable from '../../components/DataTable'
 import Select from '../components/SearchableSelect'
 import { THEME, COLORS } from '../constants/theme'
 
@@ -122,7 +123,7 @@ const DonutChart = ({ data, labelKey, valueKey, colors }) => {
 
 // KPI Card component
 const KPICard = ({ title, value, subtitle, trend, trendValue, icon, color = COLORS.primary }) => (
-  <div className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+  <div className="bg-white border border-gray-200  p-5 hover:shadow-md transition-shadow">
     <div className="flex items-start justify-between mb-3">
       <div className="p-2 rounded-lg" style={{ backgroundColor: `${color}15` }}>
         {icon}
@@ -142,40 +143,6 @@ const KPICard = ({ title, value, subtitle, trend, trendValue, icon, color = COLO
   </div>
 )
 
-// Data table component
-const DataTable = ({ columns, data, emptyMessage = 'No data available' }) => {
-  if (!data || data.length === 0) {
-    return <div className="text-center py-8 text-gray-400">{emptyMessage}</div>
-  }
-  
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-gray-200">
-            {columns.map((col, idx) => (
-              <th key={idx} className="text-left py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                {col.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, rowIdx) => (
-            <tr key={rowIdx} className="border-b border-gray-100 hover:bg-gray-50">
-              {columns.map((col, colIdx) => (
-                <td key={colIdx} className="py-3 px-4 text-sm text-gray-700">
-                  {col.render ? col.render(row) : row[col.key]}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
 // Report sections
 const REPORT_SECTIONS = [
   {
@@ -191,6 +158,7 @@ const REPORT_SECTIONS = [
       { id: 'unassigned', label: 'Unassigned' },
       { id: 'on_hold', label: 'On Hold' },
       { id: 'aging', label: 'Aging Tickets' },
+      { id: 'priority', label: 'Priority' },
       { id: 'sla', label: 'SLA Performance' },
       { id: 'volume', label: 'Volume Trends' },
       { id: 'agents', label: 'Agent Performance' },
@@ -218,6 +186,7 @@ export default function Reports({
 }) {
   const [activeSection, setActiveSection] = useState(report_type)
   const [activeReport, setActiveReport] = useState('overview')
+  const [expandedSections, setExpandedSections] = useState([report_type])
   const [selectedRange, setSelectedRange] = useState(date_range)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
@@ -277,17 +246,25 @@ export default function Reports({
   }
   
   const handleSectionChange = (sectionId) => {
-    setActiveSection(sectionId)
-    setActiveReport('overview')
-    // Reset filters when changing section
-    setSelectedGroup('')
-    setSelectedAgent('')
-    setSelectedStatus('')
-    setSelectedPriority('')
-    router.visit(`/reports/?type=${sectionId}&range=${selectedRange}`, {
-      preserveState: true,
-      preserveScroll: true,
-    })
+    // Toggle expand/collapse
+    setExpandedSections(prev => 
+      prev.includes(sectionId) 
+        ? prev.filter(id => id !== sectionId)
+        : [...prev, sectionId]
+    )
+    if (activeSection !== sectionId) {
+      setActiveSection(sectionId)
+      setActiveReport('overview')
+      // Reset filters when changing section
+      setSelectedGroup('')
+      setSelectedAgent('')
+      setSelectedStatus('')
+      setSelectedPriority('')
+      router.visit(`/reports/?type=${sectionId}&range=${selectedRange}`, {
+        preserveState: true,
+        preserveScroll: true,
+      })
+    }
   }
   
   const handleRangeChange = (range) => {
@@ -374,29 +351,45 @@ export default function Reports({
                       onClick={() => handleSectionChange(section.id)}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                         activeSection === section.id
-                          ? 'text-white'
+                          ? 'text-gray-900'
                           : 'text-gray-600 hover:bg-gray-100'
                       }`}
-                      style={activeSection === section.id ? { backgroundColor: COLORS.primary } : {}}
                     >
-                      <span className={activeSection === section.id ? 'text-white' : 'text-gray-400'}>
+                      <span className={activeSection === section.id ? 'text-gray-700' : 'text-gray-400'}>
                         {section.icon}
                       </span>
-                      {section.label}
+                      <span className="flex-1 text-left">{section.label}</span>
+                      <svg 
+                        className={`w-4 h-4 text-gray-400 transition-transform ${expandedSections.includes(section.id) ? 'rotate-90' : ''}`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
                     </button>
                     
-                    {activeSection === section.id && (
+                    {expandedSections.includes(section.id) && (
                       <div className="ml-4 mt-1 space-y-1">
                         {section.reports.map((report) => (
                           <button
                             key={report.id}
-                            onClick={() => setActiveReport(report.id)}
+                            onClick={() => {
+                              if (activeSection !== section.id) {
+                                setActiveSection(section.id)
+                                router.visit(`/reports/?type=${section.id}&range=${selectedRange}`, {
+                                  preserveState: true,
+                                  preserveScroll: true,
+                                })
+                              }
+                              setActiveReport(report.id)
+                            }}
                             className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                              activeReport === report.id
+                              activeSection === section.id && activeReport === report.id
                                 ? 'bg-purple-50 font-medium'
                                 : 'text-gray-500 hover:bg-gray-50'
                             }`}
-                            style={activeReport === report.id ? { color: COLORS.primary } : {}}
+                            style={activeSection === section.id && activeReport === report.id ? { color: COLORS.primary } : {}}
                           >
                             {report.label}
                           </button>
@@ -684,7 +677,7 @@ export default function Reports({
                       {/* Charts Grid */}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         {/* Status Distribution */}
-                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <div className="bg-white  border border-gray-200 p-6">
                           <h3 className="text-lg font-semibold text-gray-900 mb-4">Status Distribution</h3>
                           <DonutChart 
                             data={tickets.status_breakdown?.map(s => ({ 
@@ -697,7 +690,7 @@ export default function Reports({
                         </div>
                         
                         {/* Priority Distribution */}
-                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <div className="bg-white  border border-gray-200 p-6">
                           <h3 className="text-lg font-semibold text-gray-900 mb-4">Priority Distribution</h3>
                           <DonutChart 
                             data={tickets.priority_breakdown?.map(p => ({ 
@@ -713,7 +706,7 @@ export default function Reports({
                       
                       {/* Source and Type */}
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <div className="bg-white  border border-gray-200 p-6">
                           <h3 className="text-lg font-semibold text-gray-900 mb-4">Tickets by Source</h3>
                           <HorizontalBarChart 
                             data={tickets.source_breakdown?.map(s => ({ 
@@ -725,7 +718,7 @@ export default function Reports({
                           />
                         </div>
                         
-                        <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <div className="bg-white  border border-gray-200 p-6">
                           <h3 className="text-lg font-semibold text-gray-900 mb-4">Tickets by Type</h3>
                           <HorizontalBarChart 
                             data={tickets.type_breakdown?.map(t => ({ 
@@ -756,7 +749,7 @@ export default function Reports({
                       </div>
                       
                       {/* Unassigned Tickets Table */}
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Unassigned Tickets</h3>
                         <DataTable 
                           columns={[
@@ -813,7 +806,7 @@ export default function Reports({
                       </div>
                       
                       {/* On Hold Tickets Table */}
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Tickets On Hold</h3>
                         <DataTable 
                           columns={[
@@ -851,7 +844,7 @@ export default function Reports({
                   {/* Aging Tickets */}
                   {activeReport === 'aging' && (
                     <div className="space-y-6">
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-2">Ticket Aging Analysis</h3>
                         <p className="text-sm text-gray-500 mb-6">Open tickets by how long they've been waiting</p>
                         
@@ -872,13 +865,84 @@ export default function Reports({
                         {Object.entries(tickets.aging || {}).map(([label, value]) => (
                           <div 
                             key={label}
-                            className="bg-white rounded-xl border border-gray-200 p-4 text-center"
+                            className="bg-white  border border-gray-200 p-4 text-center"
                           >
                             <div className="text-2xl font-bold" style={{ color: COLORS.primary }}>{value}</div>
                             <div className="text-sm text-gray-500">{label}</div>
                           </div>
                         ))}
                       </div>
+                    </div>
+                  )}
+                  
+                  {/* Priority Report */}
+                  {activeReport === 'priority' && (
+                    <div className="space-y-6">
+                      {/* Priority Summary Cards */}
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                        {['low', 'normal', 'high', 'urgent'].map((priority) => {
+                          const priorityColors = {
+                            'urgent': '#7c3aed',
+                            'high': '#dc2626',
+                            'normal': '#eab308',
+                            'low': '#22c55e',
+                          }
+                          const count = (tickets.priority_breakdown || []).find(p => p.priority === priority)?.count || 0
+                          return (
+                            <div key={priority} className="bg-white  border border-gray-200 p-4 text-center">
+                              <div className="text-2xl font-bold" style={{ color: priorityColors[priority] || COLORS.primary }}>
+                                {count}
+                              </div>
+                              <div className="text-sm text-gray-600 font-medium mt-1">{formatPriority(priority)}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+
+                      {/* Tickets by Priority - Individual sections */}
+                      {['low', 'normal', 'high', 'urgent'].map((priority) => {
+                        const priorityTickets = tickets.priority_tickets?.[priority] || []
+                        const priorityCount = (tickets.priority_breakdown || []).find(p => p.priority === priority)?.count || 0
+                        
+                        const priorityColors = {
+                          'urgent': '#7c3aed',
+                          'high': '#dc2626',
+                          'normal': '#eab308',
+                          'low': '#22c55e',
+                        }
+                        
+                        return (
+                          <div key={priority} className="bg-white  border border-gray-200 p-6">
+                            <div className="flex items-center gap-3 mb-4">
+                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: priorityColors[priority] }}></div>
+                              <h3 className="text-lg font-semibold text-gray-900">{formatPriority(priority)}</h3>
+                              <span className="text-sm text-gray-500">({priorityCount} tickets)</span>
+                            </div>
+                            {priorityTickets.length > 0 ? (
+                              <DataTable
+                                columns={[
+                                  { header: 'Ticket #', key: 'ticket_number' },
+                                  { header: 'Subject', key: 'title', render: (row) => (
+                                    <span className="truncate max-w-xs block" title={row.title}>{row.title}</span>
+                                  )},
+                                  { header: 'Assignee', key: 'assignee', render: (row) => 
+                                    row.assignee__first_name 
+                                      ? `${row.assignee__first_name} ${row.assignee__last_name || ''}`.trim()
+                                      : 'Unassigned'
+                                  },
+                                  { header: 'Status', key: 'status', render: (row) => formatStatus(row.status) },
+                                  { header: 'Group', key: 'group__name', render: (row) => row.group__name || '—' },
+                                ]}
+                                data={priorityTickets}
+                                paginate={true}
+                                pageSize={10}
+                              />
+                            ) : (
+                              <div className="text-gray-400 text-center py-4">No tickets</div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   
@@ -923,7 +987,7 @@ export default function Reports({
                       </div>
                       
                       {/* SLA Compliance Chart */}
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">SLA Compliance Overview</h3>
                         <DonutChart 
                           data={[
@@ -942,7 +1006,7 @@ export default function Reports({
                   {/* Volume Trends */}
                   {activeReport === 'volume' && (
                     <div className="space-y-6">
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-2">Daily Ticket Volume</h3>
                         <p className="text-sm text-gray-500 mb-6">Tickets created per day in selected period</p>
                         
@@ -963,7 +1027,7 @@ export default function Reports({
                   {/* Agent Performance */}
                   {activeReport === 'agents' && (
                     <div className="space-y-6">
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Agent Performance</h3>
                         <DataTable 
                           columns={[
@@ -1001,7 +1065,7 @@ export default function Reports({
                   {/* Group Performance */}
                   {activeReport === 'groups' && (
                     <div className="space-y-6">
-                      <div className="bg-white rounded-xl border border-gray-200 p-6">
+                      <div className="bg-white  border border-gray-200 p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4">Group Performance</h3>
                         <DataTable 
                           columns={[

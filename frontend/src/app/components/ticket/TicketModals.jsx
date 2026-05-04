@@ -19,7 +19,7 @@ export function WorkItemModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+      <div className="bg-white -xl max-w-lg w-full">
         <div className="p-6 border-b border-gray-200" style={{ backgroundColor: '#4a154b' }}>
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-white">
@@ -181,7 +181,7 @@ export function CompleteWorkItemModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+      <div className="bg-white -xl max-w-lg w-full">
         <div className="p-6 border-b border-gray-200" style={{ backgroundColor: '#4a154b' }}>
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-white">Mark Work Item Complete</h2>
@@ -250,7 +250,7 @@ export function HoldSLAModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+      <div className="bg-white -xl max-w-lg w-full">
         <div className="p-6 border-b border-gray-200" style={{ backgroundColor: '#4a154b' }}>
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-white">Put Ticket On Hold</h2>

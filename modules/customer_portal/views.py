@@ -74,6 +74,25 @@ def portal_home(request):
         # Keep popular articles for backward compatibility
         popular_articles = most_viewed_articles
     
+    # Get user's tickets if logged in
+    user_tickets = []
+    if request.user.is_authenticated:
+        tickets = Ticket.objects.filter(requester=request.user).order_by('-created_at')[:20]
+        user_tickets = [
+            {
+                'id': t.id,
+                'uuid': str(t.uuid),
+                'ticket_number': t.ticket_number,
+                'title': t.title,
+                'status': t.status,
+                'priority': t.priority,
+                'created_at': t.created_at.isoformat(),
+                'updated_at': t.updated_at.isoformat(),
+                'assignee': f"{t.assignee.first_name} {t.assignee.last_name}".strip() if t.assignee else None,
+            }
+            for t in tickets
+        ]
+    
     return {
         'portal_settings': {
             'portal_title': settings.portal_title,
@@ -82,6 +101,7 @@ def portal_home(request):
             'allow_guest_tickets': settings.allow_guest_tickets,
             'tenant_name': tenant_name,
         },
+        'user_tickets': user_tickets,
         'categories': [
             {
                 'id': c.id,
@@ -95,45 +115,53 @@ def portal_home(request):
         'popular_articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:150] + '...' if len(a.content) > 150 else a.content,
                 'views': a.views,
                 'category': a.category.name if a.category else 'Uncategorized',
+                'display_image': a.display_image or '',
             }
             for a in popular_articles
         ],
         'latest_articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:150] + '...' if len(a.content) > 150 else a.content,
                 'views': a.views,
                 'category': a.category.name if a.category else 'Uncategorized',
                 'created_at': a.created_at.isoformat(),
+                'display_image': a.display_image or '',
             }
             for a in latest_articles
         ],
         'most_viewed_articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:150] + '...' if len(a.content) > 150 else a.content,
                 'views': a.views,
                 'category': a.category.name if a.category else 'Uncategorized',
+                'display_image': a.display_image or '',
             }
             for a in most_viewed_articles
         ],
         'announcements': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:200] + '...' if len(a.content) > 200 else a.content,
                 'category': a.category.name if a.category else 'Uncategorized',
                 'created_at': a.created_at.isoformat(),
+                'display_image': a.display_image or '',
             }
             for a in announcements
         ]
@@ -308,6 +336,116 @@ def portal_track_ticket(request):
             'email': email,
         }
     }
+
+
+@require_app('customer-portal')
+@login_required(login_url='/portal/login/')
+@inertia('CustomerPortalTicketDetail')
+def portal_ticket_detail(request, ticket_number):
+    """Authenticated user ticket detail page."""
+    from modules.ticket.models import TicketComment, ActivityStream
+
+    settings = CustomerPortalSettings.get_settings()
+    tenant_name = get_organization_name() or settings.portal_title
+
+    ticket = get_object_or_404(Ticket, ticket_number=ticket_number, requester=request.user)
+
+    ticket_data = {
+        'id': ticket.id,
+        'ticket_number': ticket.ticket_number,
+        'subject': ticket.title,
+        'description': ticket.description,
+        'status': ticket.status,
+        'priority': ticket.priority,
+        'created_at': ticket.created_at.isoformat(),
+        'updated_at': ticket.updated_at.isoformat(),
+        'assignee': f"{ticket.assignee.first_name} {ticket.assignee.last_name}".strip() if ticket.assignee else None,
+    }
+
+    comments = [
+        {
+            'id': c.id,
+            'author': f"{c.author.first_name} {c.author.last_name}".strip() if c.author else 'System',
+            'message': c.message,
+            'created_at': c.created_at.isoformat(),
+            'is_agent': c.author != request.user if c.author else True,
+        }
+        for c in ticket.comments.filter(is_internal=False).order_by('created_at')
+    ]
+
+    activity_logs = [
+        {
+            'id': a.id,
+            'activity_type': a.activity_type,
+            'description': a.description,
+            'actor': f"{a.actor.first_name} {a.actor.last_name}".strip() if a.actor else 'System',
+            'created_at': a.created_at.isoformat(),
+        }
+        for a in ticket.activities.all().order_by('-created_at')
+    ]
+
+    return {
+        'tenant_name': tenant_name,
+        'ticket': ticket_data,
+        'comments': comments,
+        'activity_logs': activity_logs,
+        'currentUser': {
+            'name': f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username,
+            'email': request.user.email,
+        },
+    }
+
+
+@require_app('customer-portal')
+@login_required(login_url='/portal/login/')
+@csrf_exempt
+@require_http_methods(["POST"])
+def portal_ticket_add_comment(request, ticket_number):
+    """Add a comment to a ticket as an authenticated user."""
+    from modules.ticket.models import TicketComment, ActivityStream
+
+    try:
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError as e:
+            return JsonResponse({'success': False, 'message': f'Invalid JSON: {str(e)}'}, status=400)
+
+        message = data.get('message', '').strip()
+        if not message:
+            return JsonResponse({'success': False, 'message': 'Message is required'}, status=400)
+
+        ticket = get_object_or_404(Ticket, ticket_number=ticket_number, requester=request.user)
+
+        comment = TicketComment.objects.create(
+            ticket=ticket,
+            author=request.user,
+            message=message,
+            is_internal=False,
+        )
+
+        user_name = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
+        ActivityStream.objects.create(
+            ticket=ticket,
+            activity_type=ActivityStream.ActivityType.COMMENT_ADDED,
+            actor=request.user,
+            description=f"Comment added by {user_name}",
+            metadata={'comment_id': comment.id}
+        )
+
+        return JsonResponse({
+            'success': True,
+            'comment': {
+                'id': comment.id,
+                'author': user_name,
+                'message': comment.message,
+                'created_at': comment.created_at.isoformat(),
+                'is_agent': False,
+            }
+        })
+    except Exception as e:
+        print(f"Comment creation error: {str(e)}")
+        print(traceback.format_exc())
+        return JsonResponse({'success': False, 'message': f'Error adding comment: {str(e)}'}, status=500)
 
 
 @require_app('customer-portal')

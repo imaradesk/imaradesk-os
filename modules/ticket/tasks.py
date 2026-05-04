@@ -1,15 +1,26 @@
 """
-Celery tasks for ticket email notifications.
-These tasks handle sending emails in the background to improve UI responsiveness.
+Celery tasks for ticket operations.
+
+This module contains all ticket-related background tasks including:
+- Email notifications (ticket created, assigned, comments, etc.)
+- Survey sending to ticket callers
+
+These are event-triggered tasks (called from signals/views),
+not periodic cron jobs.
 """
+import logging
 from celery import shared_task
 from shared.utilities.tenant_compat import schema_context
-import logging
+from shared.models import Client
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60, rate_limit='10/m')
+# =============================================================================
+# TICKET EMAIL NOTIFICATION TASKS
+# =============================================================================
+
+@shared_task(bind=True, name='modules.ticket.tasks.send_ticket_email_task', max_retries=3, default_retry_delay=60, rate_limit='10/m')
 def send_ticket_email_task(self, schema_name, template_type, ticket_id, to_user_id=None, additional_context=None):
     """
     Send ticket-related email notification in background.
@@ -21,7 +32,7 @@ def send_ticket_email_task(self, schema_name, template_type, ticket_id, to_user_
         to_user_id: ID of the recipient user (optional)
         additional_context: Additional context for the email template
     """
-    from .models import Ticket
+    from modules.ticket.models import Ticket
     from shared.utilities.Mailer import Mailer
     from django.contrib.auth import get_user_model
     
@@ -53,7 +64,7 @@ def send_ticket_email_task(self, schema_name, template_type, ticket_id, to_user_
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, name='modules.ticket.tasks.send_guest_email_task', max_retries=3, default_retry_delay=60)
 def send_guest_email_task(self, schema_name, template_type, to_email, context):
     """
     Send email to guest (non-registered user) in background.
@@ -82,7 +93,7 @@ def send_guest_email_task(self, schema_name, template_type, to_email, context):
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, name='modules.ticket.tasks.send_comment_notification_task', max_retries=3, default_retry_delay=60)
 def send_comment_notification_task(self, schema_name, ticket_id, comment_id, notification_type):
     """
     Send comment-related email notification in background.
@@ -93,7 +104,7 @@ def send_comment_notification_task(self, schema_name, ticket_id, comment_id, not
         comment_id: ID of the comment
         notification_type: Type of notification ('internal', 'customer_to_agent', 'agent_to_customer')
     """
-    from .models import Ticket, TicketComment
+    from modules.ticket.models import Ticket, TicketComment
     from shared.utilities.Mailer import Mailer
     
     try:
@@ -138,12 +149,11 @@ def send_comment_notification_task(self, schema_name, ticket_id, comment_id, not
                     )
                 elif ticket.is_guest_ticket and ticket.guest_email:
                     from django.conf import settings as django_settings
-                    from shared.models import Client
+                    from django.db import connection
                     
-                    # Get company name
+                    # Get company name from current tenant
                     try:
-                        org = Client.get_current()
-                        company_name = org.name if org else 'Support Team'
+                        company_name = Client.get_current().name
                     except Exception:
                         company_name = 'Support Team'
                     
@@ -176,7 +186,7 @@ def send_comment_notification_task(self, schema_name, ticket_id, comment_id, not
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, name='modules.ticket.tasks.send_mention_notification_task', max_retries=3, default_retry_delay=60)
 def send_mention_notification_task(self, schema_name, ticket_id, comment_id, mentioned_user_id):
     """
     Send mention notification email in background.
@@ -187,7 +197,7 @@ def send_mention_notification_task(self, schema_name, ticket_id, comment_id, men
         comment_id: ID of the comment containing the mention
         mentioned_user_id: ID of the mentioned user
     """
-    from .models import Ticket, TicketComment
+    from modules.ticket.models import Ticket, TicketComment
     from shared.utilities.Mailer import Mailer
     from django.contrib.auth import get_user_model
     
@@ -221,7 +231,7 @@ def send_mention_notification_task(self, schema_name, ticket_id, comment_id, men
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+@shared_task(bind=True, name='modules.ticket.tasks.send_ticket_merged_notification_task', max_retries=3, default_retry_delay=60)
 def send_ticket_merged_notification_task(self, schema_name, primary_ticket_id, merged_ticket_id, merged_by_id=None):
     """
     Send notification when tickets are merged (background task).
@@ -232,7 +242,7 @@ def send_ticket_merged_notification_task(self, schema_name, primary_ticket_id, m
         merged_ticket_id: ID of the ticket that was merged
         merged_by_id: ID of the user who performed the merge (optional)
     """
-    from .models import Ticket
+    from modules.ticket.models import Ticket
     from shared.utilities.Mailer import Mailer
     from django.contrib.auth import get_user_model
     
@@ -282,7 +292,7 @@ def send_ticket_merged_notification_task(self, schema_name, primary_ticket_id, m
         raise self.retry(exc=e)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60, rate_limit='10/m')
+@shared_task(bind=True, name='modules.ticket.tasks.send_group_assignment_notification_task', max_retries=3, default_retry_delay=60, rate_limit='10/m')
 def send_group_assignment_notification_task(self, schema_name, ticket_id, group_id):
     """
     Send notification to all members of a group when a ticket is assigned to their group.
@@ -292,7 +302,7 @@ def send_group_assignment_notification_task(self, schema_name, ticket_id, group_
         ticket_id: ID of the ticket
         group_id: ID of the group the ticket was assigned to
     """
-    from .models import Ticket
+    from modules.ticket.models import Ticket
     from modules.users.models import Group
     from shared.utilities.Mailer import Mailer
     
@@ -356,3 +366,130 @@ def send_group_assignment_notification_task(self, schema_name, ticket_id, group_
         logger.error(f"Failed to send group assignment notification: {e}")
         raise self.retry(exc=e)
 
+
+# =============================================================================
+# SURVEY TASKS
+# =============================================================================
+
+@shared_task(bind=True, name='modules.ticket.tasks.send_survey_to_ticket_caller_task', max_retries=3, default_retry_delay=60, rate_limit='10/m')
+def send_survey_to_ticket_caller_task(self, schema_name, ticket_id, survey_id=None):
+    """
+    Send survey email to ticket caller when ticket is resolved.
+    Uses token-based URL for anonymous access (no authentication required).
+    
+    Args:
+        schema_name: Tenant schema name for database context
+        ticket_id: ID of the resolved ticket
+        survey_id: Optional specific survey ID (if None, picks from surveys with trigger_event='resolved')
+    """
+    import secrets
+    import random
+    from django.utils import timezone
+    from django.conf import settings
+    from django.db import connection
+    from modules.ticket.models import Ticket
+    from modules.surveys.models import Survey, SurveyInvitation
+    from shared.utilities.Mailer import Mailer
+    from shared.models import Client, Domain
+    
+    try:
+        with schema_context(schema_name):
+            ticket = Ticket.objects.select_related('requester').get(id=ticket_id)
+            
+            # Get caller info (works for both registered users and guests)
+            caller = ticket.caller
+            if not caller or not caller.get('email'):
+                logger.warning(f"No valid caller email for ticket {ticket.ticket_number}")
+                return {'status': 'skipped', 'reason': 'no_caller_email'}
+            
+            # Get the survey - either specified or pick randomly from 'resolved' trigger surveys
+            if survey_id:
+                survey = Survey.objects.get(id=survey_id, is_active=True)
+            else:
+                # Get all active surveys with trigger_event='resolved' (After Ticket Resolved)
+                resolved_surveys = list(Survey.objects.filter(
+                    is_active=True,
+                    trigger_event='resolved'
+                ))
+                
+                if not resolved_surveys:
+                    logger.warning(f"No active surveys with trigger 'After Ticket Resolved' for ticket {ticket.ticket_number}")
+                    return {'status': 'skipped', 'reason': 'no_resolved_trigger_survey'}
+                
+                # Pick one randomly
+                survey = random.choice(resolved_surveys)
+                logger.info(f"Selected survey '{survey.name}' (ID: {survey.id}) from {len(resolved_surveys)} available")
+            
+            # Generate unique token and create invitation for URL access
+            token = secrets.token_urlsafe(48)
+            now = timezone.now()
+            expiry_days = getattr(survey, 'expiry_days', 7) or 7
+            expires_at = now + timezone.timedelta(days=expiry_days)
+            
+            # Create invitation record for token-based access
+            invitation = SurveyInvitation.objects.create(
+                survey=survey,
+                ticket=ticket,
+                email=caller['email'],
+                user_name=caller['name'],
+                user=ticket.requester if ticket.requester else None,
+                agent=ticket.assignee,
+                token=token,
+                status='sent',
+                scheduled_at=now,
+                sent_at=now,
+                expires_at=expires_at,
+            )
+            
+            # Build survey URL using tenant domain
+            try:
+                tenant = Client.objects.get(schema_name=schema_name)
+                primary_domain = Domain.objects.filter(tenant=tenant, is_primary=True).first()
+                if primary_domain:
+                    tenant_domain = primary_domain.domain
+                else:
+                    primary_domain_setting = getattr(settings, 'PRIMARY_DOMAIN', '127.0.0.1:8000')
+                    tenant_domain = f"{schema_name}.{primary_domain_setting}"
+            except Client.DoesNotExist:
+                primary_domain_setting = getattr(settings, 'PRIMARY_DOMAIN', '127.0.0.1:8000')
+                tenant_domain = f"{schema_name}.{primary_domain_setting}"
+            
+            # Determine protocol
+            use_ssl = getattr(settings, 'USE_SSL', False) or getattr(settings, 'SECURE_SSL_REDIRECT', False)
+            protocol = 'https' if use_ssl else 'http'
+            
+            # URL uses token for anonymous access (matches public_survey_view)
+            survey_url = f"{protocol}://{tenant_domain}/survey/{token}/"
+            
+            # Get company name
+            try:
+                company_name = Client.get_current().name
+            except Exception:
+                company_name = 'Support Team'
+            
+            # Send the survey email
+            mailer = Mailer()
+            mailer.send_email(
+                template_type='survey_invitation',
+                to_emails=[caller['email']],
+                context={
+                    'customer_name': caller['name'],
+                    'survey_url': survey_url,
+                    'ticket_number': ticket.ticket_number,
+                    'ticket_subject': ticket.title,
+                    'company_name': company_name,
+                }
+            )
+            
+            logger.info(f"Sent survey '{survey.name}' email to {caller['email']} for ticket {ticket.ticket_number}")
+            return {'status': 'success', 'email': caller['email'], 'survey_id': survey.id}
+        
+    except Ticket.DoesNotExist:
+        logger.error(f"Ticket {ticket_id} not found for survey")
+        return {'status': 'error', 'message': 'ticket_not_found'}
+    except Survey.DoesNotExist:
+        logger.error(f"Survey {survey_id} not found")
+        return {'status': 'error', 'message': 'survey_not_found'}
+    except Exception as e:
+        logger.error(f"Failed to send survey email: {e}")
+        raise self.retry(exc=e)

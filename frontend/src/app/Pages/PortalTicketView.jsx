@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Head, Link } from '@inertiajs/react';
 import toast from 'react-hot-toast';
+import api from '../../utils/axios';
 import { useTimezone } from '../context/TimezoneContext';
 
 const THEME = {
@@ -44,19 +45,13 @@ export default function PortalTicketView({ ticket, comments, activity_logs, sear
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/portal/add-comment/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ticket_number: ticket.ticket_number,
-          email: search.email,
-          message: newComment,
-        }),
+      const response = await api.post('/portal/add-comment/', {
+        ticket_number: ticket.ticket_number,
+        email: search.email,
+        message: newComment,
       });
 
-      const data = await response.json();
+      const data = response.data;
 
       if (data.success) {
         toast.success('Comment added successfully');
@@ -105,7 +100,7 @@ export default function PortalTicketView({ ticket, comments, activity_logs, sear
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Ticket Header */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+          <div className="bg-white -sm border border-gray-200 mb-6">
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -155,7 +150,7 @@ export default function PortalTicketView({ ticket, comments, activity_logs, sear
           </div>
 
           {/* Tabs */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="bg-white -sm border border-gray-200">
             <div className="border-b border-gray-200">
               <nav className="flex -mb-px">
                 <button

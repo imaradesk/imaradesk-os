@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Head, router, usePage } from '@inertiajs/react'
 import toast from 'react-hot-toast'
+import api from '../../utils/axios'
 import AppShell from '../components/AppShell'
 import TicketStatusStepper from '../components/TicketStatusStepper'
 import { COLORS } from '../constants/theme'
-import { csrfFetch } from '../../utils/csrf'
 import Drawer, { DrawerBody, DrawerFooter } from '../components/Drawer'
 import Button from '../../components/Button'
 
@@ -19,7 +19,6 @@ import {
   SLATab,
   WorkItemModal,
   CompleteWorkItemModal,
-  HoldSLAModal,
   AttachmentDrawer,
   ResumeTicketConfirm
 } from '../components/ticket'
@@ -55,8 +54,6 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
   })
   
   // SLA state
-  const [showHoldModal, setShowHoldModal] = useState(false)
-  const [holdReason, setHoldReason] = useState('')
   const [slaData, setSlaData] = useState(sla)
   const [showResumeConfirm, setShowResumeConfirm] = useState(false)
   
@@ -74,6 +71,10 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
   // Loading state
   const [loading, setLoading] = useState(true)
   
+  // Determine if ticket fields should be read-only (closed or resolved)
+  const computedStatus = ticket?.computed_status || ticket?.status
+  const isReadOnly = computedStatus === 'closed' || computedStatus === 'resolved' || ticket?.is_merged
+  
   // Merge state
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeSearchQuery, setMergeSearchQuery] = useState('')
@@ -89,31 +90,18 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
 
   // Fetch work items
   const fetchWorkItems = () => {
-    fetch(`/tickets/${ticket.id}/work-items/`)
-      .then(res => res.json())
-      .then(data => setWorkItems(data.work_items || []))
+    api.get(`/tickets/${ticket.uuid}/work-items/`)
+      .then(res => setWorkItems(res.data.work_items || []))
       .catch(() => toast.error('Failed to fetch work items'))
   }
 
   useEffect(() => {
     fetchWorkItems()
-  }, [ticket.id])
-
-  // Get CSRF token helper
-  const getCsrfToken = () => 
-    document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+  }, [ticket.uuid])
 
   // Update ticket field
   const updateField = (field, value) => {
-    fetch(`/tickets/${ticket.id}/update/`, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': getCsrfToken(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ [field]: value })
-    })
-      .then(res => res.json())
+    api.post(`/tickets/${ticket.uuid}/update/`, { [field]: value })
       .then(() => {
         toast.success('Ticket updated')
         router.reload({ preserveScroll: true })
@@ -127,26 +115,20 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
       message: newComment,
       is_internal: commentInternal,
       mentions: commentMentions, // Include mentioned user IDs
+      attachments: [],
     }
     
-    if (!payload.message.trim()) {
-      toast.error('Please enter a comment')
+    // Allow comments with just attachments or just text
+    if (!payload.message?.trim() && (!payload.attachments || payload.attachments.length === 0)) {
+      toast.error('Please enter a comment or attach a file')
       return
     }
 
     setProcessing(true)
-    fetch(`/tickets/${ticket.id}/comment/`, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': getCsrfToken(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload)
+    api.post(`/tickets/${ticket.uuid}/comment/`, {
+      ...payload,
+      attachments: JSON.stringify(payload.attachments || [])
     })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed')
-        return res.json()
-      })
       .then(() => {
         toast.success('Comment added successfully')
         setNewComment('')
@@ -163,10 +145,6 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
 
   // Status change handling
   const updateStatus = (newStatus) => {
-    if ((newStatus === 'pending' || newStatus === 'hold') && slaData && !slaData.is_on_hold) {
-      setShowHoldModal(true)
-      return
-    }
     focusNotesForAction('status', newStatus)
   }
 
@@ -184,53 +162,41 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
   const executePendingAction = async (note = '') => {
     if (!pendingStatusAction) return
 
-    const csrfToken = getCsrfToken()
-
     try {
       if (note.trim()) {
-        await fetch(`/tickets/${ticket.id}/comment/`, {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ message: note, is_internal: true })
-        })
+        await api.post(`/tickets/${ticket.uuid}/comment/`, { message: note, is_internal: true })
       }
 
       if (pendingStatusAction.type === 'assign') {
-        await fetch(`/tickets/${ticket.id}/update/`, {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ assignee: currentUser.id })
-        })
+        await api.post(`/tickets/${ticket.uuid}/update/`, { assignee: currentUser.id })
 
         const statusFormData = new URLSearchParams()
-        statusFormData.append('status', 'in_progress')
-        await fetch(`/tickets/${ticket.id}/status/`, {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: statusFormData
+        statusFormData.append('status', 'open')
+        await api.post(`/tickets/${ticket.uuid}/status/`, statusFormData, {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         })
-        toast.success('Ticket assigned to you and marked as In Progress')
+        toast.success('Ticket assigned to you')
       } else if (pendingStatusAction.type === 'status') {
+        // Check if this is a reopen action (from resolved/closed to active status)
+        const isReopening = (ticket?.status === 'resolved' || ticket?.status === 'closed') && 
+                           ['new', 'open', 'in_progress', 'pending'].includes(pendingStatusAction.value)
+        
+        // If changing to pending/hold and ticket has SLA not on hold, put SLA on hold
+        if ((pendingStatusAction.value === 'pending' || pendingStatusAction.value === 'hold') && slaData && !slaData.is_on_hold) {
+          await api.post(`/sla/api/tickets/${ticket.uuid}/sla/hold/`, { reason: note || 'Ticket placed on hold' })
+        }
+        
         const formData = new URLSearchParams()
         formData.append('status', pendingStatusAction.value)
-        await fetch(`/tickets/${ticket.id}/status/`, {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: formData
+        await api.post(`/tickets/${ticket.uuid}/status/`, formData, {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         })
-        toast.success('Status updated')
+        
+        if (isReopening) {
+          toast.success('Ticket reopened')
+        } else {
+          toast.success('Status updated')
+        }
       }
 
       setPendingStatusAction(null)
@@ -249,77 +215,14 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
     focusNotesForAction('assign')
   }
 
-  // Hold SLA
-  const handleHoldSLA = () => {
-    if (!holdReason.trim()) {
-      toast.error('Please enter a hold reason')
-      return
-    }
-
-    const csrfToken = getCsrfToken()
-    fetch(`/sla/api/tickets/${ticket.id}/sla/hold/`, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': csrfToken,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ reason: holdReason })
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          toast.success('SLA timer has been put on hold')
-          setSlaData(prev => ({ ...prev, ...data.sla }))
-          
-          const reasonToSave = holdReason
-          setShowHoldModal(false)
-          setHoldReason('')
-          
-          fetch(`/tickets/${ticket.id}/comment/`, {
-            method: 'POST',
-            headers: {
-              'X-CSRFToken': csrfToken,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              message: `Ticket placed on hold. Reason: ${reasonToSave}`,
-              is_internal: true
-            })
-          }).then(() => {
-            const formData = new URLSearchParams()
-            formData.append('status', 'pending')
-            fetch(`/tickets/${ticket.id}/status/`, {
-              method: 'POST',
-              headers: {
-                'X-CSRFToken': csrfToken,
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: formData
-            }).then(() => router.reload())
-          })
-        } else {
-          toast.error(data.message || 'Failed to hold SLA')
-        }
-      })
-      .catch(() => toast.error('Failed to hold SLA'))
-  }
-
   // Resume ticket
   const handleResumeTicket = () => setShowResumeConfirm(true)
 
   const confirmResumeTicket = () => {
-    const csrfToken = getCsrfToken()
-    
     if (slaData?.is_on_hold) {
-      fetch(`/sla/api/tickets/${ticket.id}/sla/resume/`, {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': csrfToken,
-          'Content-Type': 'application/json',
-        },
-      })
-        .then(res => res.json())
-        .then(data => {
+      api.post(`/sla/api/tickets/${ticket.uuid}/sla/resume/`)
+        .then(res => {
+          const data = res.data
           if (data.success) {
             toast.success('SLA timer has been resumed')
             setSlaData(prev => ({ ...prev, ...data.sla }))
@@ -329,13 +232,8 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
 
     const formData = new URLSearchParams()
     formData.append('status', 'in_progress')
-    fetch(`/tickets/${ticket.id}/status/`, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': csrfToken,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData
+    api.post(`/tickets/${ticket.uuid}/status/`, formData, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
       .then(() => {
         toast.success('Ticket resumed')
@@ -353,9 +251,8 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
     
     setSearchingTickets(true)
     try {
-      const res = await fetch(`/tickets/search/?q=${encodeURIComponent(query)}&exclude=${ticket.id}`)
-      const data = await res.json()
-      setMergeSearchResults(data.tickets || [])
+      const res = await api.get(`/tickets/search/?q=${encodeURIComponent(query)}&exclude=${ticket.uuid}`)
+      setMergeSearchResults(res.data.tickets || [])
     } catch (err) {
       toast.error('Failed to search tickets')
     } finally {
@@ -371,19 +268,12 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
     
     setMerging(true)
     try {
-      const res = await fetch(`/tickets/${ticket.id}/merge/`, {
-        method: 'POST',
-        headers: {
-          'X-CSRFToken': getCsrfToken(),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ target_ticket_id: selectedMergeTarget.id })
-      })
+      const res = await api.post(`/tickets/${ticket.uuid}/merge/`, { target_ticket_uuid: selectedMergeTarget.uuid })
       
-      const data = await res.json()
+      const data = res.data
       if (data.success) {
         toast.success('Ticket merged successfully')
-        router.visit(`/tickets/${selectedMergeTarget.id}`)
+        router.visit(`/tickets/${selectedMergeTarget.uuid}`)
       } else {
         toast.error(data.error || 'Failed to merge ticket')
       }
@@ -409,21 +299,10 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
     }
 
     const url = editingWorkItem 
-      ? `/tickets/${ticket.id}/work-items/${editingWorkItem.id}/update/`
-      : `/tickets/${ticket.id}/work-items/create/`
+      ? `/tickets/${ticket.uuid}/work-items/${editingWorkItem.id}/update/`
+      : `/tickets/${ticket.uuid}/work-items/create/`
 
-    fetch(url, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': getCsrfToken(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(workItemForm)
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed')
-        return res.json()
-      })
+    api.post(url, workItemForm)
       .then(() => {
         toast.success(editingWorkItem ? 'Work item updated' : 'Work item created')
         setShowWorkItemModal(false)
@@ -458,18 +337,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
   const submitCompleteWorkItem = () => {
     if (!completingWorkItem) return
 
-    fetch(`/tickets/${ticket.id}/work-items/${completingWorkItem.id}/update/`, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': getCsrfToken(),
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ status: 'done', work_notes: completionNotes })
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed')
-        return res.json()
-      })
+    api.post(`/tickets/${ticket.uuid}/work-items/${completingWorkItem.id}/update/`, { status: 'done', work_notes: completionNotes })
       .then(() => {
         toast.success('Work item marked as complete')
         setShowCompleteModal(false)
@@ -493,27 +361,16 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
       const formData = new FormData()
       formData.append('file', selectedFile)
 
-      const uploadRes = await csrfFetch('/upload/', {
-        method: 'POST',
-        body: formData,
+      const uploadRes = await api.post('/upload/', formData)
+      const uploadData = uploadRes.data
+
+      await api.post(`/tickets/${ticket.uuid}/attachment/`, {
+        file_url: uploadData.file_url,
+        file_name: uploadData.file_name,
+        file_size: uploadData.file_size,
+        file_type: uploadData.file_type,
+        is_internal: attachmentIsInternal,
       })
-      const uploadData = await uploadRes.json()
-
-      if (!uploadRes.ok) throw new Error(uploadData.error || 'Failed to upload')
-
-      const attachRes = await csrfFetch(`/tickets/${ticket.id}/attachment/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file_url: uploadData.url,
-          file_name: uploadData.name,
-          file_size: uploadData.size,
-          file_type: uploadData.content_type,
-          is_internal: attachmentIsInternal,
-        }),
-      })
-
-      if (!attachRes.ok) throw new Error('Failed to attach')
 
       toast.success('File attached successfully')
       setShowAttachmentDrawer(false)
@@ -531,20 +388,12 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
     const file = e.target.files[0]
     if (!file) return
 
-    const csrfToken = getCsrfToken()
-
     try {
       const uploadFormData = new FormData()
       uploadFormData.append('file', file)
 
-      const uploadResponse = await fetch('/upload/', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken },
-        body: uploadFormData,
-      })
-
-      if (!uploadResponse.ok) throw new Error('Upload failed')
-      const uploadData = await uploadResponse.json()
+      const uploadResponse = await api.post('/upload/', uploadFormData)
+      const uploadData = uploadResponse.data
 
       const attachFormData = new FormData()
       attachFormData.append('file_url', uploadData.file_url)
@@ -552,13 +401,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
       attachFormData.append('file_size', uploadData.file_size)
       attachFormData.append('file_type', uploadData.file_type)
 
-      const attachResponse = await fetch(`/tickets/${ticket.id}/attachment/`, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken },
-        body: attachFormData,
-      })
-
-      if (!attachResponse.ok) throw new Error('Attachment failed')
+      await api.post(`/tickets/${ticket.uuid}/attachment/`, attachFormData)
 
       toast.success('File uploaded successfully')
       router.reload({ preserveScroll: true })
@@ -604,7 +447,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
       </div>
       <div className="flex gap-6 p-6">
         <div className="flex-1 space-y-6">
-          <div className="bg-white rounded-lg shadow-sm">
+          <div className="bg-white -sm">
             <div className="p-6 space-y-4">
               <div className="h-32 bg-gray-200 rounded animate-pulse"></div>
               <div className="h-24 bg-gray-200 rounded animate-pulse"></div>
@@ -612,7 +455,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
           </div>
         </div>
         <div className="w-80 space-y-4">
-          <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="bg-white -sm p-6">
             <div className="h-6 w-24 bg-gray-200 rounded animate-pulse mb-4"></div>
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
@@ -652,11 +495,12 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
             onStatusChange={updateStatus}
             onResumeTicket={handleResumeTicket}
             onMergeTicket={() => setShowMergeModal(true)}
+            readOnly={isReadOnly}
           />
 
           {/* Status Stepper */}
           <div className="bg-white border-b border-gray-200 px-6 py-4">
-            <TicketStatusStepper currentStatus={ticket?.status} />
+            <TicketStatusStepper currentStatus={ticket?.computed_status || ticket?.status} />
           </div>
 
           {/* Content */}
@@ -670,6 +514,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
                 attachments={attachments}
                 onFieldUpdate={updateField}
                 onViewAttachments={() => setActiveTab('attachments')}
+                readOnly={isReadOnly}
               />
 
               {/* Main Content */}
@@ -714,7 +559,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
                 </div>
 
                 {/* Tab Content */}
-                <div className="bg-gray-50 rounded-b-lg border border-gray-200 border-t-0 p-6 h-[600px] overflow-y-auto">
+                <div className="bg-gray-50 rounded-b-lg border border-gray-200 border-t-0 p-6 h-[600px] overflow-hidden">
                   {activeTab === 'conversation' && (
                     <ConversationTab
                       ticket={ticket}
@@ -740,7 +585,7 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
                   )}
 
                   {activeTab === 'activity' && (
-                    <div className="space-y-6">
+                    <div className="h-full overflow-y-auto space-y-6">
                       <ActivityTimeline activities={activities} />
                     </div>
                   )}
@@ -804,17 +649,6 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
           completionNotes={completionNotes}
           setCompletionNotes={setCompletionNotes}
           onSubmit={submitCompleteWorkItem}
-        />
-
-        <HoldSLAModal
-          isOpen={showHoldModal}
-          onClose={() => {
-            setShowHoldModal(false)
-            setHoldReason('')
-          }}
-          holdReason={holdReason}
-          setHoldReason={setHoldReason}
-          onSubmit={handleHoldSLA}
         />
 
         <AttachmentDrawer
@@ -889,12 +723,14 @@ export default function TicketView({ ticket, comments = [], attachments = [], ac
                       <div className="flex items-center justify-between">
                         <span className="font-medium text-gray-900">#{t.ticket_number}</span>
                         <span className={`text-xs px-2 py-1 rounded-full ${
-                          t.status === 'open' ? 'bg-green-100 text-green-800' :
-                          t.status === 'in_progress' ? 'bg-blue-100 text-blue-800' :
-                          t.status === 'on_hold' ? 'bg-yellow-100 text-yellow-800' :
+                          t.computed_status === 'new' ? 'bg-purple-100 text-purple-800' :
+                          t.computed_status === 'open' ? 'bg-blue-100 text-blue-800' :
+                          t.computed_status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                          t.computed_status === 'pending' ? 'bg-orange-100 text-orange-800' :
+                          t.computed_status === 'resolved' ? 'bg-green-100 text-green-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
-                          {t.status_display || t.status?.replace('_', ' ')}
+                          {t.status_display || t.computed_status?.replace('_', ' ')}
                         </span>
                       </div>
                       <p className="text-sm text-gray-600 mt-1 truncate">{t.title}</p>

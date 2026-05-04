@@ -23,22 +23,22 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
 app.conf.beat_schedule = {
-    # Process emails every 10 seconds (more reasonable than 1 second for email polling)
-    'process-assigned-system-emails': {
-        'task': 'modules.crons.tasks.process_tenant_emails',
-        'schedule': 10.0,  # Every 10 seconds
+    # Process IMAP emails every 10 seconds
+    'process-emails': {
+        'task': 'modules.email_to_ticket.tasks.process_emails',
+        'schedule': 10.0,
         'options': {'queue': 'email_processing'}
     },
     # Process Outlook emails every 60 seconds
     'process-outlook-emails': {
-        'task': 'modules.crons.tasks.process_outlook_emails',
-        'schedule': 60.0,  # Every 60 seconds
+        'task': 'modules.email_to_ticket.tasks.process_outlook_emails_task',
+        'schedule': 60.0,
         'options': {'queue': 'email_processing'}
     },
     # Process Custom IMAP emails every 60 seconds
     'process-custom-imap-emails': {
-        'task': 'modules.crons.tasks.process_custom_imap_emails',
-        'schedule': 60.0,  # Every 60 seconds
+        'task': 'modules.email_to_ticket.tasks.process_custom_imap_emails_task',
+        'schedule': 60.0,
         'options': {'queue': 'email_processing'}
     },
     # Send weekly performance reports - every Sunday at midnight
@@ -82,6 +82,7 @@ app.conf.beat_schedule = {
 
 # Task routing - separate queues for different task types
 app.conf.task_routes = {
+    'modules.email_to_ticket.tasks.*': {'queue': 'email_processing'},
     'modules.crons.tasks.process_*': {'queue': 'email_processing'},
     'modules.crons.tasks.send_weekly_*': {'queue': 'reports'},
     'modules.crons.tasks.check_sla_*': {'queue': 'sla_notifications'},

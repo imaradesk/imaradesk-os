@@ -4,7 +4,6 @@ import { useTimezone } from '../context/TimezoneContext';
 
 const THEME = {
   primary: '#4a154b',
-  gradient: 'linear-gradient(135deg, #4a154b 0%, #165c66 100%)',
 };
 
 export default function PortalKBArticle({ article, related_articles, tenant_name }) {
@@ -23,12 +22,12 @@ export default function PortalKBArticle({ article, related_articles, tenant_name
                 {tenant_name || 'Customer Portal'}
               </Link>
               <div className="flex gap-3">
-                <Link
+                {/* <Link
                   href="/portal/create-ticket/"
                   className="px-4 py-2 bg-white text-gray-800 rounded-lg transition-all hover:bg-gray-100 text-sm font-medium"
                 >
                   Submit Ticket
-                </Link>
+                </Link> */}
                 <Link
                   href="/portal/"
                   className="text-sm text-white hover:text-gray-200 transition-all"
@@ -62,7 +61,18 @@ export default function PortalKBArticle({ article, related_articles, tenant_name
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Main Article Content */}
             <div className="lg:col-span-2">
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+              <div className="bg-white -sm border border-gray-200 p-8">
+                {/* Display Image */}
+                {article.display_image && (
+                  <div className="mb-8 -mx-8 -mt-8">
+                    <img
+                      src={article.display_image}
+                      alt={article.title}
+                      className="w-full h-64 md:h-80 object-cover rounded-t-lg"
+                    />
+                  </div>
+                )}
+                
                 <div 
                   className="prose max-w-none"
                   dangerouslySetInnerHTML={{ __html: article.content }}
@@ -107,9 +117,9 @@ export default function PortalKBArticle({ article, related_articles, tenant_name
             </div>
 
             {/* Sidebar */}
-            <div className="space-y-6">
+            <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
               {/* Quick Actions */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="bg-white -sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
                   Quick Actions
                 </h3>
@@ -132,21 +142,30 @@ export default function PortalKBArticle({ article, related_articles, tenant_name
 
               {/* Related Articles */}
               {related_articles.length > 0 && (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="bg-white -sm border border-gray-200 p-6">
                   <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
                     Related Articles
                   </h3>
                   <div className="space-y-3">
                     {related_articles.map((relatedArticle) => (
                       <Link
-                        key={relatedArticle.id}
-                        href={`/portal/kb/${relatedArticle.id}/`}
-                        className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-all"
+                        key={relatedArticle.uuid}
+                        href={`/portal/kb/${relatedArticle.uuid}/`}
+                        className="block rounded-lg overflow-hidden hover:shadow-md transition-all border border-gray-100"
                       >
-                        <h4 className="text-sm font-medium mb-1" style={{ color: THEME.primary }}>
-                          {relatedArticle.title}
-                        </h4>
-                        <p className="text-xs text-gray-600">{relatedArticle.excerpt}</p>
+                        {relatedArticle.display_image && (
+                          <img
+                            src={relatedArticle.display_image}
+                            alt={relatedArticle.title}
+                            className="w-full h-24 object-cover"
+                          />
+                        )}
+                        <div className="p-3 bg-gray-50">
+                          <h4 className="text-sm font-medium mb-1" style={{ color: THEME.primary }}>
+                            {relatedArticle.title}
+                          </h4>
+                          <p className="text-xs text-gray-600 line-clamp-2">{relatedArticle.excerpt}</p>
+                        </div>
                       </Link>
                     ))}
                   </div>
@@ -154,7 +173,7 @@ export default function PortalKBArticle({ article, related_articles, tenant_name
               )}
 
               {/* Article Info */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+              <div className="bg-white -sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
                   Article Information
                 </h3>

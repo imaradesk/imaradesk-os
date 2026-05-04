@@ -18,6 +18,9 @@ export default defineConfig(({ mode }) => ({
     watch: { usePolling: true, disableGlobbing: false },
   },
   resolve: { extensions: ['.js', '.json', '.jsx'] },
+  define: {
+    global: 'globalThis',
+  },
   build: {
     outDir: resolve('./dist'),
     assetsDir: 'assets',

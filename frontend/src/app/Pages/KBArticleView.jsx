@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import { THEME } from '../constants/theme'
 import { ArrowLeft, Edit, Eye, ThumbsUp, ThumbsDown, Share2, MessageSquare, FileText, Link as LinkIcon } from 'lucide-react'
+import LucideIcon from '../components/LucideIcon'
 
 export default function KBArticleView({ article, comments = [], relatedArticles = [] }) {
   const [liked, setLiked] = useState(false)
@@ -84,43 +85,42 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
       <AppShell active="knowledgebase">
         <main className="flex-1 bg-gray-50">
           {/* Header */}
-          <div className={`${THEME.gradient} text-white px-6 py-4`}>
+          <div className="bg-white border-b border-gray-200 px-6 py-4">
             <div className="max-w-4xl mx-auto">
               <div className="flex items-center justify-between mb-4">
                 <Link
                   href="/knowledgebase/"
-                  className="flex items-center gap-2 text-white hover:text-blue-100"
+                  className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
                 >
                   <ArrowLeft className="w-5 h-5" />
                   Back to Knowledge Base
                 </Link>
                 <Link
-                  href={`/knowledgebase/article/${article.id}/edit/`}
-                  className={`px-4 py-2 rounded-md ${THEME.button.secondary} flex items-center gap-2`}
+                  href={`/knowledgebase/article/${article.uuid}/edit/`}
+                  className="px-4 py-2 rounded-md bg-[#4a154b] text-white hover:bg-[#611f69] flex items-center gap-2"
                 >
                   <Edit className="w-4 h-4" />
-                  Edit Article
                 </Link>
               </div>
 
-              {/* Article Header */}
+              {/* Article Heade */}
               <div className="mb-4">
                 {article.category && (
                   <Link 
                     href={`/knowledgebase/category/${article.category.id}`}
-                    className="inline-flex items-center gap-2 text-sm text-blue-100 hover:text-white mb-3"
+                    className="inline-flex items-center gap-2 text-sm text-[#4a154b] hover:text-[#611f69] mb-3"
                   >
-                    <span className="text-lg">{article.category.icon}</span>
+                    <LucideIcon name={article.category.icon} className="w-4 h-4" />
                     {article.category.name}
                   </Link>
                 )}
-                <h1 className="text-3xl font-bold text-white mb-3">{article.title}</h1>
+                <h1 className="text-3xl font-bold text-gray-900 mb-3">{article.title}</h1>
                 
                 {/* Meta info */}
-                <div className="flex items-center gap-4 text-sm text-blue-100">
+                <div className="flex items-center gap-4 text-sm text-gray-500">
                   {article.author && (
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-white text-[#4a154b] flex items-center justify-center text-xs font-semibold">
+                      <div className="w-8 h-8 rounded-full bg-[#4a154b] text-white flex items-center justify-center text-xs font-semibold">
                         {article.author.name.charAt(0).toUpperCase()}
                       </div>
                       <span>{article.author.name}</span>
@@ -146,7 +146,7 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
 
                 {/* Summary */}
                 {article.summary && (
-                  <p className="mt-4 text-lg text-blue-100 italic">{article.summary}</p>
+                  <p className="mt-4 text-lg text-gray-600 italic">{article.summary}</p>
                 )}
               </div>
             </div>
@@ -154,9 +154,20 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
 
           {/* Article Content */}
           <div className="max-w-4xl mx-auto px-6 py-8">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mb-6">
+            {/* Display Image */}
+            {article.display_image && (
+              <div className="mb-6">
+                <img
+                  src={article.display_image}
+                  alt={article.title}
+                  className="w-full h-64 md:h-80 object-cover -sm"
+                />
+              </div>
+            )}
+
+            <div className="bg-white -sm border border-gray-200 p-8 mb-6">
               <div className="prose prose-lg max-w-none">
-                <div className="whitespace-pre-wrap">{article.content}</div>
+                <div dangerouslySetInnerHTML={{ __html: article.content }} />
               </div>
 
               {/* Tags */}
@@ -213,7 +224,7 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
                   </button>
 
                   {showShareMenu && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-10">
+                    <div className="absolute right-0 mt-2 w-48 bg-white -lg border border-gray-200 py-2 z-10">
                       <button
                         onClick={() => handleShare('twitter')}
                         className="w-full flex items-center gap-3 px-4 py-2 hover:bg-gray-50 text-left"
@@ -256,7 +267,7 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
 
             {/* Comments Section */}
             {article.allow_comments && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+              <div className="bg-white -sm border border-gray-200 p-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Comments ({comments.length})</h2>
 
                 {/* Add Comment Form */}
@@ -309,14 +320,14 @@ export default function KBArticleView({ article, comments = [], relatedArticles 
             )}
 
             {/* Related Articles */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 mt-6">
+            <div className="bg-white -sm border border-gray-200 p-8 mt-6">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">Related Articles</h2>
               {relatedArticles.length > 0 ? (
                 <div className="space-y-4">
                   {relatedArticles.map((relArticle) => (
                     <Link
                       key={relArticle.id}
-                      href={`/knowledgebase/article/${relArticle.id}`}
+                      href={`/knowledgebase/article/${relArticle.uuid}`}
                       className="block p-4 border border-gray-200 rounded-lg hover:border-[#4a154b] hover:shadow-md transition-all"
                     >
                       <h3 className="font-semibold text-gray-900 mb-1 hover:text-[#4a154b]">

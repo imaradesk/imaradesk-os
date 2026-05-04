@@ -78,8 +78,11 @@ INSTALLED_APPS = [
     'modules.kb',
     'modules.settings',
     'modules.ticket',
+    'modules.tasks',
     'modules.sla',
     'modules.customer_portal',
+    'modules.email_to_ticket',
+    'modules.onboarding',
 ]
 
 SITE_ID = 1 
@@ -123,17 +126,18 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': config('DB_ENGINE'),
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
-        'PORT': config('DB_PORT'),
-        'OPTIONS': {
-            'init_command': config('DB_OPTIONS_INIT_COMMAND'),
-        },
+        'ENGINE': config('DB_ENGINE', default='django.db.backends.mysql'),
+        'NAME': config('DB_NAME', default='imaradesk'),
+        'USER': config('DB_USER', default='root'),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default='127.0.0.1'),
+        'PORT': config('DB_PORT', default='3306'),
     }
 }
+
+_db_init_command = config('DB_OPTIONS_INIT_COMMAND', default='')
+if _db_init_command:
+    DATABASES['default']['OPTIONS'] = {'init_command': _db_init_command}
 
 # imanidesk_90009
 

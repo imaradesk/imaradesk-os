@@ -6,4 +6,8 @@ class TicketConfig(AppConfig):
     name = 'modules.ticket'
     label = 'ticket' 
 
+    def ready(self):
+        """Import signals when Django starts."""
+        import modules.ticket.signals
+
 

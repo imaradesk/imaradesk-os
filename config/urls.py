@@ -28,6 +28,8 @@ urlpatterns = [
     path('', include('modules.core.urls')),
     # Tickets module
     path('', include('modules.tickets.urls')),
+    # Tasks module
+    path('', include('modules.tasks.urls')),
     # People module - users, organizations
     path('', include('modules.people.urls')),
     # Users module URLs
@@ -40,6 +42,8 @@ urlpatterns = [
     path('sla/', include('modules.sla.urls')),
     # Customer portal
     path('', include('modules.customer_portal.urls')),
+    # Onboarding / Quick Start
+    path('', include('modules.onboarding.urls')),
 ]
 
 # Serve media files in development

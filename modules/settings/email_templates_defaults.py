@@ -399,4 +399,108 @@ This ticket requires immediate attention.
             'company_name': 'Company name',
         }
     },
+    # =============================================================================
+    # Knowledge Base Templates
+    # =============================================================================
+    {
+        'name': 'KB Article Published',
+        'template_type': 'kb_article_published',
+        'subject': 'New Article Published: {{article_title}}',
+        'body_text': '''Hi {{subscriber_name}},
+
+A new knowledge base article has been published.
+
+Title: {{article_title}}
+Category: {{category_name}}
+Author: {{author_name}}
+
+Summary:
+{{article_summary}}
+
+
+
+{{company_name}} Support Team''',
+        'status': 'active',
+        'available_variables': {
+            'subscriber_name': 'Recipient name',
+            'article_title': 'Article title',
+            'category_name': 'Article category',
+            'author_name': 'Article author',
+            'article_summary': 'Article summary',
+            'article_url': 'Article URL',
+            'company_name': 'Company name',
+        }
+    },
+    {
+        'name': 'KB Article Updated',
+        'template_type': 'kb_article_updated',
+        'subject': 'Article Updated: {{article_title}}',
+        'body_text': '''Hi {{subscriber_name}},
+
+A knowledge base article you authored has been updated.
+
+Title: {{article_title}}
+Category: {{category_name}}
+
+
+
+{{company_name}} Support Team''',
+        'status': 'active',
+        'available_variables': {
+            'subscriber_name': 'Recipient name',
+            'article_title': 'Article title',
+            'category_name': 'Article category',
+            'article_url': 'Article URL',
+            'company_name': 'Company name',
+        }
+    },
+    {
+        'name': 'KB Article Approved',
+        'template_type': 'kb_article_approved',
+        'subject': 'Your Article Has Been Approved: {{article_title}}',
+        'body_text': '''Hi {{author_name}},
+
+Your knowledge base article has been approved and published.
+
+Title: {{article_title}}
+Category: {{category_name}}
+
+Your article is now available for readers.
+
+{{company_name}} Support Team''',
+        'status': 'active',
+        'available_variables': {
+            'author_name': 'Article author',
+            'article_title': 'Article title',
+            'category_name': 'Article category',
+            'article_url': 'Article URL',
+            'company_name': 'Company name',
+        }
+    },
+    {
+        'name': 'KB Article Rejected',
+        'template_type': 'kb_article_rejected',
+        'subject': 'Your Article Needs Revision: {{article_title}}',
+        'body_text': '''Hi {{author_name}},
+
+Your knowledge base article has been returned for revision.
+
+Title: {{article_title}}
+Category: {{category_name}}
+
+Reason:
+{{rejection_reason}}
+
+Please update the article and resubmit for approval.
+
+{{company_name}} Support Team''',
+        'status': 'active',
+        'available_variables': {
+            'author_name': 'Article author',
+            'article_title': 'Article title',
+            'category_name': 'Article category',
+            'rejection_reason': 'Reason for rejection',
+            'company_name': 'Company name',
+        }
+    },
 ]

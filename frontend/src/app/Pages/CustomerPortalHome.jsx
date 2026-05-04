@@ -1,12 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { THEME, COLORS } from '../constants/theme';
+import DataTable from '../../components/DataTable';
 
-export default function CustomerPortalHome({ portal_settings, categories, popular_articles, latest_articles, most_viewed_articles, announcements }) {
+export default function CustomerPortalHome({ portal_settings, categories, popular_articles, latest_articles, most_viewed_articles, announcements, user_tickets = [] }) {
   const { props } = usePage();
-  const currentUser = props.auth?.user || { first_name: 'Titus' };
+  const currentUser = props.auth?.user;
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeSlide, setActiveSlide] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const scrollContainerRef = useRef(null);
 
@@ -17,54 +17,37 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
     }
   };
 
-  // User stats
+  // User stats based on actual tickets
   const userStats = {
-    openTickets: 2,
-    resolvedTickets: 15,
-    totalTickets: 17,
-    pendingTickets: 1,
-    inProgress: 1,
-    closedThisMonth: 8,
+    openTickets: user_tickets.filter(t => ['new', 'open'].includes(t.status)).length,
+    inProgress: user_tickets.filter(t => t.status === 'in_progress').length,
+    resolved: user_tickets.filter(t => ['resolved', 'closed'].includes(t.status)).length,
   };
 
-  // Combine KB articles for featured section
+  // Combine KB articles for featured section (deduplicated by uuid)
   const featuredArticles = [
     ...(popular_articles || []),
     ...(latest_articles || []),
     ...(most_viewed_articles || [])
-  ].slice(0, 8); // Limit to 8 articles
+  ].filter((article, index, self) => 
+    index === self.findIndex(a => a.uuid === article.uuid)
+  ).slice(0, 8); // Limit to 8 articles
 
-  // Welcome slides
-  const slides = [
-    {
-      title: portal_settings?.portal_title || "Support Portal",
-      description: "Welcome to your customer support portal. Get help, browse articles, and track your tickets.",
-      icon: "🎯",
-      number: 1,
-      color: "from-gray-800 to-gray-900"
-    },
-    {
-      title: "Get Help Fast",
-      description: "Search our knowledge base or submit a ticket to get the support you need.",
-      icon: "💬",
-      number: 2,
-      color: "from-blue-600 to-blue-700"
-    },
-    {
-      title: "Knowledge Base",
-      description: "Browse helpful articles and guides to find answers to common questions.",
-      icon: "📚",
-      number: 3,
-      color: "from-purple-600 to-purple-700"
-    },
-    {
-      title: "Track Tickets",
-      description: "Monitor the status of your support requests and view ticket history.",
-      icon: "📋",
-      number: 4,
-      color: "from-gray-600 to-gray-700"
-    }
-  ];
+  const STATUS_LABELS = {
+    new: { label: 'New', bg: 'bg-indigo-100', text: 'text-indigo-800' },
+    open: { label: 'Open', bg: 'bg-blue-100', text: 'text-blue-800' },
+    in_progress: { label: 'In Progress', bg: 'bg-purple-100', text: 'text-purple-800' },
+    pending: { label: 'Pending', bg: 'bg-yellow-100', text: 'text-yellow-800' },
+    resolved: { label: 'Resolved', bg: 'bg-green-100', text: 'text-green-800' },
+    closed: { label: 'Closed', bg: 'bg-gray-100', text: 'text-gray-800' },
+  };
+
+  const PRIORITY_LABELS = {
+    low: { label: 'Low', bg: 'bg-gray-100', text: 'text-gray-600' },
+    normal: { label: 'Normal', bg: 'bg-blue-100', text: 'text-blue-600' },
+    high: { label: 'High', bg: 'bg-orange-100', text: 'text-orange-600' },
+    urgent: { label: 'Urgent', bg: 'bg-red-100', text: 'text-red-600' },
+  };
 
   const scrollFeatured = (direction) => {
     if (scrollContainerRef.current) {
@@ -107,12 +90,13 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
         <aside className={`
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0
-          fixed lg:static
+          fixed lg:sticky lg:top-0
           w-80 bg-white border-r border-gray-200
           flex flex-col
-          h-full
+          h-full lg:h-screen
           transition-transform duration-300
           z-40
+          overflow-y-auto
         `}>
           
           {/* Recent Activity */}
@@ -136,19 +120,23 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
           <div className="p-6 border-b border-gray-200">
             <h3 className="font-semibold text-gray-900 text-sm mb-4">Quick Actions</h3>
             <div className="space-y-2">
-              <Link href="/portal/create-ticket/" className="block w-full px-4 py-2 text-sm text-white text-center rounded transition-colors" style={{ backgroundColor: COLORS.primary }}>
+              <Link href="/portal/create-ticket/" className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm text-white rounded transition-colors" style={{ backgroundColor: COLORS.primary }}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
                 Create Ticket
               </Link>
-              <Link href="/portal/kb/" className="block w-full px-4 py-2 text-sm text-center rounded border border-gray-300 hover:bg-gray-50 transition-colors">
-                Browse KB
-              </Link>
-              <Link href="/portal/track-ticket/" className="block w-full px-4 py-2 text-sm text-center rounded border border-gray-300 hover:bg-gray-50 transition-colors">
+              <Link href="/portal/track-ticket/" className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm rounded border border-gray-300 hover:bg-gray-50 transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
                 Track Ticket
               </Link>
             </div>
           </div>
 
           {/* Ticket Overview */}
+          {currentUser && (
           <div className="p-6 border-b border-gray-200">
             <h3 className="font-semibold text-gray-900 text-sm mb-4">Ticket Overview</h3>
             <div className="grid grid-cols-3 gap-3">
@@ -161,29 +149,12 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
                 <div className="text-xs text-gray-600 uppercase">In Progress</div>
               </div>
               <div className="text-center">
-                <div className="text-2xl font-bold text-gray-900 mb-1">{userStats.closedThisMonth}</div>
-                <div className="text-xs text-gray-600 uppercase">Closed This Month</div>
+                <div className="text-2xl font-bold text-gray-900 mb-1">{userStats.resolved}</div>
+                <div className="text-xs text-gray-600 uppercase">Resolved</div>
               </div>
             </div>
           </div>
-
-          {/* Open Tickets Section */}
-          <div className="p-6 border-b border-gray-200 flex-1">
-            <div className="px-4 py-2 mb-4 font-semibold text-sm text-white" style={{ backgroundColor: COLORS.primary }}>
-              OPEN TICKETS
-            </div>
-            <div className="space-y-3">
-              <div className="text-center py-8 text-gray-500 text-sm">
-                <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z" />
-                </svg>
-                <p>No open tickets</p>
-                <Link href="/portal/create-ticket/" className="text-sm font-medium mt-2 inline-block" style={{ color: COLORS.primary }}>
-                  Create your first ticket
-                </Link>
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* Help Resources */}
           <div className="p-6 bg-gray-100">
@@ -198,13 +169,13 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
                   Browse Articles →
                 </span>
               </Link>
-              <Link href="/portal/surveys/" className="block border border-gray-200 rounded p-3 bg-white hover:shadow-sm transition-shadow">
+              {/* <Link href="/portal/surveys/" className="block border border-gray-200 rounded p-3 bg-white hover:shadow-sm transition-shadow">
                 <h4 className="font-medium text-sm text-gray-900 mb-2">📝 Customer Survey</h4>
                 <div className="text-xs text-gray-600 mb-3">Help us improve by sharing your feedback</div>
                 <span className="text-sm font-medium" style={{ color: COLORS.primary }}>
                   Take Survey →
                 </span>
-              </Link>
+              </Link> */}
             </div>
           </div>
         </aside>
@@ -246,68 +217,95 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
                 </button>
               </div>
             </div>
-
-            {/* Slide Indicators */}
-            <div className="flex justify-center gap-2 mt-6 md:mt-8 relative z-10">
-              {slides.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => setActiveSlide(index)}
-                  className={`h-2 rounded-full transition-all ${
-                    activeSlide === index ? 'w-8' : 'w-2'
-                  }`}
-                  style={{ backgroundColor: 'white', opacity: activeSlide === index ? 1 : 0.4 }}
-                />
-              ))}
-            </div>
           </div>
 
-          {/* Welcome Carousel */}
-          <div className="bg-white px-4 md:px-8 lg:px-12 py-6 md:py-8 border-b border-gray-200">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 max-w-7xl">
-              {/* Main Featured Slide */}
-              <div className={`md:col-span-1 lg:col-span-2 bg-gradient-to-br ${slides[activeSlide].color} rounded-2xl p-6 md:p-8 text-white relative overflow-hidden min-h-[280px] md:min-h-[320px] flex flex-col justify-between`}>
-                <div className="absolute top-4 md:top-6 right-4 md:right-6 w-10 h-10 md:w-12 md:h-12 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-lg md:text-xl font-bold">
-                  {slides[activeSlide].number}
-                </div>
-                <div>
-                  <div className="text-5xl md:text-6xl lg:text-7xl mb-4 md:mb-6">{slides[activeSlide].icon}</div>
-                  <h2 className="text-2xl md:text-3xl font-bold mb-3 md:mb-4 leading-tight">{slides[activeSlide].title}</h2>
-                  <p className="text-white text-opacity-90 text-base md:text-lg leading-relaxed">{slides[activeSlide].description}</p>
-                </div>
-                {activeSlide === 0 && (
-                  <div className="space-y-2 mt-4 md:mt-6 hidden md:block">
-                    <p className="text-white text-opacity-90 text-sm">Need help? We're here for you 24/7.</p>
-                    <div className="text-white text-opacity-90 text-sm space-y-1">
-                      <p className="font-semibold text-white">Getting Started:</p>
-                      <p><span className="font-semibold">Step 1:</span> Search our knowledge base for answers</p>
-                      <p><span className="font-semibold">Step 2:</span> Browse articles by category</p>
-                      <p><span className="font-semibold">Step 3:</span> Create a support ticket if needed</p>
-                      <p><span className="font-semibold">Step 4:</span> Track your ticket status in real-time</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Preview Slides */}
-              {slides.filter((_, i) => i !== activeSlide).slice(0, 3).map((slide, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActiveSlide(slides.indexOf(slide))}
-                  className={`${idx > 0 ? 'hidden lg:flex' : 'hidden md:flex'} bg-gradient-to-br ${slide.color} rounded-2xl p-6 text-white text-left hover:scale-105 transition-transform relative overflow-hidden min-h-[280px] md:min-h-[320px] flex-col justify-between`}
+          {/* My Cases Section - Only show if user is logged in */}
+          {currentUser && user_tickets.length > 0 && (
+            <div className="bg-white px-4 md:px-8 lg:px-12 py-6 md:py-8 border-b border-gray-200">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl md:text-2xl font-bold text-gray-900">My Cases</h2>
+                <Link 
+                  href="/portal/track-ticket/" 
+                  className="text-sm font-medium hover:underline"
+                  style={{ color: COLORS.primary }}
                 >
-                  <div>
-                    <div className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-lg font-bold">
-                      {slide.number}
-                    </div>
-                    <div className="text-5xl mb-4">{slide.icon}</div>
-                    <h3 className="font-bold text-xl mb-3 leading-tight">{slide.title}</h3>
-                    <p className="text-white text-opacity-80 text-sm leading-relaxed">{slide.description}</p>
-                  </div>
-                </button>
-              ))}
+                  View All →
+                </Link>
+              </div>
+              
+              <DataTable
+                data={user_tickets.slice(0, 5)}
+                defaultPageSize={5}
+                columns={[
+                  {
+                    key: 'ticket_number',
+                    header: 'Ticket #',
+                    render: (ticket) => (
+                      <span className="text-sm font-medium" style={{ color: COLORS.primary }}>
+                        #{ticket.ticket_number}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'title',
+                    header: 'Subject',
+                    render: (ticket) => (
+                      <span className="text-sm text-gray-900 line-clamp-1">{ticket.title}</span>
+                    ),
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    render: (ticket) => {
+                      const status = STATUS_LABELS[ticket.status] || STATUS_LABELS.new;
+                      return (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
+                          {status.label}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: 'priority',
+                    header: 'Priority',
+                    render: (ticket) => {
+                      const priority = PRIORITY_LABELS[ticket.priority] || PRIORITY_LABELS.normal;
+                      return (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${priority.bg} ${priority.text}`}>
+                          {priority.label}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: 'created_at',
+                    header: 'Created',
+                    render: (ticket) => (
+                      <span className="text-sm text-gray-500">
+                        {new Date(ticket.created_at).toLocaleDateString()}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'actions',
+                    header: '',
+                    sortable: false,
+                    hideable: false,
+                    render: (ticket) => (
+                      <Link
+                        href={`/portal/ticket/${ticket.ticket_number}/`}
+                        className="text-sm font-medium hover:underline"
+                        style={{ color: COLORS.primary }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        View
+                      </Link>
+                    ),
+                  },
+                ]}
+              />
             </div>
-          </div>
+          )}
 
           {/* Featured Section */}
           <div className="px-4 md:px-8 lg:px-12 py-6 md:py-8 flex-1 bg-gray-50 overflow-y-auto">
@@ -357,14 +355,24 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
                   
                   return (
                     <Link
-                      key={article.id}
-                      href={`/portal/kb/${article.id}/`}
+                      key={article.uuid}
+                      href={`/portal/kb/${article.uuid}/`}
                       className="flex-shrink-0 w-64 md:w-72 bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-shadow"
                     >
-                      <div className={`h-48 bg-gradient-to-br ${color} flex items-center justify-center relative p-6`}>
-                        <div className="text-white text-5xl">📄</div>
-                        {article.views && (
-                          <div className="absolute top-4 right-4 bg-white bg-opacity-20 px-3 py-1 rounded-full text-white text-xs font-medium">
+                      <div className={`h-48 ${!article.display_image ? 'bg-gray-100' : ''} flex items-center justify-center relative`}>
+                        {article.display_image ? (
+                          <img 
+                            src={article.display_image} 
+                            alt={article.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        )}
+                        {article.views > 0 && (
+                          <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-sm px-3 py-1 rounded-full text-white text-xs font-medium">
                             {article.views} views
                           </div>
                         )}
@@ -406,36 +414,6 @@ export default function CustomerPortalHome({ portal_settings, categories, popula
               ) : (
                 <div className="text-gray-500 py-8">No articles available yet.</div>
               )}
-
-              {/* Additional cards from categories if available */}
-              {categories && categories.slice(0, 2).map((category) => (
-                <div key={category.id} className="flex-shrink-0 w-64 md:w-72 bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-shadow">
-                  <div className="h-48 bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-6xl">
-                    {category.icon || '📚'}
-                  </div>
-                  <div className="p-5">
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="w-8 h-8 rounded-full bg-gray-300 flex-shrink-0"></div>
-                      <div className="text-xs text-gray-600 min-w-0">
-                        <div className="font-medium truncate">Created by Support Team</div>
-                      </div>
-                    </div>
-                    <div className="text-xs text-gray-500 mb-2">Category</div>
-                    <h3 className="font-bold text-gray-900 mb-4 text-base leading-tight min-h-[44px]">{category.name}</h3>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">{category.article_count || 0} Articles</span>
-                      <button 
-                        className="px-4 py-2 text-white rounded text-sm font-medium transition-colors"
-                        style={{ backgroundColor: COLORS.primary }}
-                        onMouseEnter={(e) => e.target.style.backgroundColor = COLORS.primaryHover}
-                        onMouseLeave={(e) => e.target.style.backgroundColor = COLORS.primary}
-                      >
-                        Browse
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         </main>

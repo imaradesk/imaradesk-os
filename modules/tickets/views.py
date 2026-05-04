@@ -2,6 +2,7 @@
 Tickets views - Ticket management functionality
 """
 import json
+import requests
 from datetime import datetime, timedelta, date
 
 from django.shortcuts import redirect
@@ -20,6 +21,7 @@ from inertia import inertia, render as inertia_render
 
 from modules.ticket.models import Ticket, TicketComment, TicketAttachment, ActivityStream, Department, WorkItem
 from modules.users.models import Group
+from shared.models import Client
 
 
 def get_cached_views(tenant_schema):
@@ -48,7 +50,7 @@ def invalidate_views_cache(tenant_schema):
 @inertia('Tickets')
 def tickets(request):
     """Tickets list page with real data from database."""
-    # Use static schema name for single-tenant cache key
+    # Get tenant schema for cache key
     tenant_schema = 'default'
     
     # Load cached views
@@ -64,9 +66,18 @@ def tickets(request):
     view_id = request.GET.get('view', default_view_id)
     page_number = request.GET.get('page', 1)
     per_page = 15
+    
+    # Get filter parameters
+    filter_ticket_number = request.GET.get('ticketNumber', '')
+    filter_status = request.GET.get('status', '')
+    filter_priority = request.GET.get('priority', '')
+    filter_type = request.GET.get('type', '')
+    filter_assignee = request.GET.get('assignee', '')
+    filter_date_from = request.GET.get('dateFrom', '')
+    filter_date_to = request.GET.get('dateTo', '')
 
     # Get all tickets (exclude drafts by default)
-    all_tickets = Ticket.objects.select_related('requester', 'assignee', 'sla').exclude(status='draft')
+    all_tickets = Ticket.objects.select_related('requester', 'assignee', 'sla', 'group', 'channel').exclude(status='draft')
     
     # Count drafts separately (for the Drafts view in sidebar)
     drafts_count = Ticket.objects.filter(status='draft').count()
@@ -123,7 +134,7 @@ def tickets(request):
     # Get tickets based on selected view
     if view_id == 'drafts':
         # For drafts view, show only draft tickets
-        tickets_list = Ticket.objects.select_related('requester', 'assignee', 'sla').filter(status='draft')
+        tickets_list = Ticket.objects.select_related('requester', 'assignee', 'sla', 'group', 'channel').filter(status='draft')
     elif view_id == 'all_tickets':
         tickets_list = all_tickets
     elif view_id == 'response_overdue':
@@ -155,6 +166,56 @@ def tickets(request):
         )
 
     tickets_list = tickets_list.order_by('-updated_at')
+    
+    # Apply filters if provided
+    if filter_ticket_number:
+        tickets_list = tickets_list.filter(ticket_number__icontains=filter_ticket_number)
+    
+    if filter_status:
+        tickets_list = tickets_list.filter(status=filter_status)
+    
+    if filter_priority:
+        tickets_list = tickets_list.filter(priority=filter_priority)
+    
+    if filter_type:
+        tickets_list = tickets_list.filter(type=filter_type)
+    
+    if filter_assignee:
+        if filter_assignee == 'unassigned':
+            tickets_list = tickets_list.filter(assignee__isnull=True)
+        elif filter_assignee == 'me':
+            tickets_list = tickets_list.filter(assignee=request.user)
+        elif filter_assignee == 'my-team':
+            # Filter by user's groups/teams (from UserProfile, not Django auth groups)
+            try:
+                user_groups = request.user.profile.groups.all()
+                if user_groups.exists():
+                    tickets_list = tickets_list.filter(group__in=user_groups)
+            except Exception:
+                pass
+        else:
+            # Assume it's a user ID
+            try:
+                assignee_id = int(filter_assignee)
+                tickets_list = tickets_list.filter(assignee_id=assignee_id)
+            except (ValueError, TypeError):
+                pass
+    
+    if filter_date_from:
+        try:
+            date_from = datetime.strptime(filter_date_from, '%Y-%m-%d')
+            tickets_list = tickets_list.filter(created_at__gte=date_from)
+        except ValueError:
+            pass
+    
+    if filter_date_to:
+        try:
+            date_to = datetime.strptime(filter_date_to, '%Y-%m-%d')
+            # Add 1 day to include the entire end date
+            date_to = date_to + timedelta(days=1)
+            tickets_list = tickets_list.filter(created_at__lt=date_to)
+        except ValueError:
+            pass
 
     # Paginate tickets
     paginator = Paginator(tickets_list, per_page)
@@ -175,21 +236,38 @@ def tickets(request):
         
         tickets_data.append({
             'id': t.id,
+            'uuid': str(t.uuid),
             'source': t.source,
             'ticket_number': t.ticket_number or f"#{t.id}",
             'status': t.get_status_display(),
+            'computed_status': t.computed_status,
             'subject': t.title,
             'requester': (
                 f"{t.requester.first_name} {t.requester.last_name}".strip() or t.requester.username
                 if t.requester 
                 else (f"{t.guest_name} (Guest)" if getattr(t, 'is_guest_ticket', False) and getattr(t, 'guest_name', None) else 'Unknown')
             ),
+            'assignee': (
+                f"{t.assignee.first_name} {t.assignee.last_name}".strip() or t.assignee.username
+                if t.assignee else None
+            ),
             'requested': t.created_at.strftime('%b %d, %H:%M'),
             'type': t.get_type_display(),
             'priority': t.get_priority_display(),
+            'group': t.group.name if t.group else None,
+            'description': t.description[:200] + '...' if t.description and len(t.description) > 200 else t.description,
             'sla_breached': sla_breached,
             'response_breached': response_breached,
             'resolution_breached': resolution_breached,
+            'sla_info': t.sla_info,
+            'channel': {
+                'id': t.channel.id,
+                'channel_id': t.channel.channel_id,
+                'name': t.channel.name,
+                'icon': t.channel.icon,
+                'icon_bg': t.channel.icon_bg,
+                'icon_color': t.channel.icon_color,
+            } if t.channel else None,
         })
 
     # Build views list with counts (using cached_views loaded at top)
@@ -268,7 +346,7 @@ def bulk_mark_draft(request):
             return JsonResponse({'error': 'No tickets selected'}, status=400)
         
         # Update tickets to draft status
-        updated_count = Ticket.objects.filter(id__in=ticket_ids).update(status='draft')
+        updated_count = Ticket.objects.filter(uuid__in=ticket_ids).update(status='draft')
         
         return JsonResponse({
             'success': True,
@@ -282,9 +360,460 @@ def bulk_mark_draft(request):
 
 
 @login_required
+def bulk_remove_draft(request):
+    """Bulk remove tickets from draft status (set to 'new')."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        # Update draft tickets to 'new' status
+        updated_count = Ticket.objects.filter(uuid__in=ticket_ids, status='draft').update(status='new')
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) removed from draft',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_assign_agent(request):
+    """Bulk assign tickets to an agent."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        agent_id = data.get('agent_id')
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        if not agent_id:
+            return JsonResponse({'error': 'No agent selected'}, status=400)
+        
+        try:
+            agent = User.objects.get(id=agent_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Agent not found'}, status=404)
+        
+        # Update tickets
+        tickets = Ticket.objects.filter(uuid__in=ticket_ids)
+        updated_count = 0
+        
+        for ticket in tickets:
+            old_assignee = ticket.assignee
+            ticket.assignee = agent
+            # Set status to 'open' when assigning (if ticket is 'new' or unassigned)
+            if ticket.status == 'new':
+                ticket.status = 'open'
+            ticket.save()
+            
+            # Create activity log
+            ActivityStream.objects.create(
+                ticket=ticket,
+                activity_type=ActivityStream.ActivityType.ASSIGNED,
+                actor=request.user,
+                description=f"Bulk assigned to {agent.get_full_name() or agent.username}",
+                metadata={
+                    'assignee_id': agent.id,
+                    'previous_assignee_id': old_assignee.id if old_assignee else None,
+                    'bulk_action': True
+                }
+            )
+            updated_count += 1
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) assigned to {agent.get_full_name() or agent.username}',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_assign_team(request):
+    """Bulk assign tickets to a team/group."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        team_id = data.get('team_id')
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        if not team_id:
+            return JsonResponse({'error': 'No team selected'}, status=400)
+        
+        try:
+            team = Group.objects.get(id=team_id)
+        except Group.DoesNotExist:
+            return JsonResponse({'error': 'Team not found'}, status=404)
+        
+        # Update tickets
+        updated_count = Ticket.objects.filter(uuid__in=ticket_ids).update(group=team)
+        
+        # Create activity logs
+        for ticket in Ticket.objects.filter(uuid__in=ticket_ids):
+            ActivityStream.objects.create(
+                ticket=ticket,
+                activity_type=ActivityStream.ActivityType.ASSIGNED,
+                actor=request.user,
+                description=f"Bulk assigned to team: {team.name}",
+                metadata={
+                    'team_id': team.id,
+                    'team_name': team.name,
+                    'bulk_action': True
+                }
+            )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) assigned to team {team.name}',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_change_status(request):
+    """Bulk change status of tickets."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        new_status = data.get('status')
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        if not new_status:
+            return JsonResponse({'error': 'No status provided'}, status=400)
+        
+        # Validate status
+        valid_statuses = [choice[0] for choice in Ticket.Status.choices]
+        if new_status not in valid_statuses:
+            return JsonResponse({'error': 'Invalid status'}, status=400)
+        
+        # Users cannot manually set status to 'closed' - only crons can close tickets
+        if new_status == 'closed':
+            return JsonResponse({'error': 'Tickets can only be closed automatically. Use Resolved instead.'}, status=400)
+        
+        # Update tickets with activity logging
+        tickets = Ticket.objects.filter(uuid__in=ticket_ids)
+        updated_count = 0
+        
+        for ticket in tickets:
+            old_status = ticket.status
+            if old_status != new_status:
+                ticket.status = new_status
+                if new_status == 'resolved' and not ticket.resolved_at:
+                    ticket.resolved_at = timezone.now()
+                ticket.save()
+                
+                # Handle SLA pause/resume on status change
+                try:
+                    sla = getattr(ticket, 'sla', None)
+                    if sla:
+                        if new_status == 'pending' and old_status != 'pending':
+                            sla.hold('Ticket placed on hold')
+                        elif old_status == 'pending' and new_status not in ['pending', 'closed', 'resolved']:
+                            sla.resume()
+                        elif new_status in ['closed', 'resolved'] and old_status not in ['closed', 'resolved']:
+                            sla.hold(f'Ticket {new_status}')
+                        elif old_status in ['resolved', 'closed'] and new_status not in ['closed', 'resolved', 'pending']:
+                            sla.resume()
+                except Exception:
+                    pass
+                
+                ActivityStream.objects.create(
+                    ticket=ticket,
+                    activity_type=ActivityStream.ActivityType.STATUS_CHANGED,
+                    actor=request.user,
+                    description=f"Bulk status changed from {old_status} to {new_status}",
+                    metadata={
+                        'old_value': old_status,
+                        'new_value': new_status,
+                        'bulk_action': True
+                    }
+                )
+                updated_count += 1
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) status changed to {new_status}',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_change_priority(request):
+    """Bulk change priority of tickets."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        new_priority = data.get('priority')
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        if not new_priority:
+            return JsonResponse({'error': 'No priority provided'}, status=400)
+        
+        # Validate priority
+        valid_priorities = [choice[0] for choice in Ticket.Priority.choices]
+        if new_priority not in valid_priorities:
+            return JsonResponse({'error': 'Invalid priority'}, status=400)
+        
+        # Update tickets with activity logging
+        tickets = Ticket.objects.filter(uuid__in=ticket_ids)
+        updated_count = 0
+        
+        for ticket in tickets:
+            old_priority = ticket.priority
+            if old_priority != new_priority:
+                ticket.priority = new_priority
+                ticket.save()
+                
+                ActivityStream.objects.create(
+                    ticket=ticket,
+                    activity_type=ActivityStream.ActivityType.PRIORITY_CHANGED,
+                    actor=request.user,
+                    description=f"Bulk priority changed from {old_priority} to {new_priority}",
+                    metadata={
+                        'old_value': old_priority,
+                        'new_value': new_priority,
+                        'bulk_action': True
+                    }
+                )
+                updated_count += 1
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) priority changed to {new_priority}',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_change_type(request):
+    """Bulk change type of tickets."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        new_type = data.get('type')
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        if not new_type:
+            return JsonResponse({'error': 'No type provided'}, status=400)
+        
+        # Validate type
+        valid_types = [choice[0] for choice in Ticket.Type.choices]
+        if new_type not in valid_types:
+            return JsonResponse({'error': 'Invalid type'}, status=400)
+        
+        # Update tickets
+        tickets = Ticket.objects.filter(uuid__in=ticket_ids)
+        updated_count = 0
+        
+        for ticket in tickets:
+            old_type = ticket.type
+            if old_type != new_type:
+                ticket.type = new_type
+                ticket.save()
+                
+                ActivityStream.objects.create(
+                    ticket=ticket,
+                    activity_type=ActivityStream.ActivityType.TICKET_UPDATED,
+                    actor=request.user,
+                    description=f"Bulk type changed from {old_type} to {new_type}",
+                    metadata={
+                        'field': 'type',
+                        'old_value': old_type,
+                        'new_value': new_type,
+                        'bulk_action': True
+                    }
+                )
+                updated_count += 1
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{updated_count} ticket(s) type changed to {new_type}',
+            'updated_count': updated_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def duplicate_ticket(request, uuid):
+    """Duplicate a single ticket."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        original_ticket = Ticket.objects.get(uuid=uuid)
+    except Ticket.DoesNotExist:
+        return JsonResponse({'error': 'Ticket not found'}, status=404)
+    
+    try:
+        # Create duplicate ticket (copy channel from original)
+        new_ticket = Ticket.objects.create(
+            title=f"[Copy] {original_ticket.title}",
+            description=original_ticket.description,
+            source=original_ticket.source,
+            channel=original_ticket.channel,
+            requester=request.user,
+            status=Ticket.Status.NEW,
+            priority=original_ticket.priority,
+            type=original_ticket.type,
+            department=original_ticket.department,
+            group=original_ticket.group,
+            tags=original_ticket.tags.copy() if original_ticket.tags else [],
+        )
+        
+        # Create activity log
+        ActivityStream.objects.create(
+            ticket=new_ticket,
+            activity_type=ActivityStream.ActivityType.TICKET_CREATED,
+            actor=request.user,
+            description=f"Ticket duplicated from {original_ticket.ticket_number}",
+            metadata={
+                'original_ticket_id': original_ticket.id,
+                'original_ticket_number': original_ticket.ticket_number,
+            }
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Ticket duplicated successfully',
+            'new_ticket_id': new_ticket.id,
+            'new_ticket_uuid': str(new_ticket.uuid),
+            'new_ticket_number': new_ticket.ticket_number
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def bulk_delete_tickets(request):
+    """Bulk delete (soft delete) tickets."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        ticket_ids = data.get('ticket_ids', [])
+        
+        if not ticket_ids:
+            return JsonResponse({'error': 'No tickets selected'}, status=400)
+        
+        # Actually delete the tickets
+        deleted_count, _ = Ticket.objects.filter(uuid__in=ticket_ids).delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'{deleted_count} ticket(s) deleted',
+            'deleted_count': deleted_count
+        })
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@login_required
+def get_agents(request):
+    """Get list of agents for assignment dropdown."""
+    from modules.users.models import UserProfile
+    
+    agents = User.objects.filter(
+        profile__is_agent=True
+    ).select_related('profile').values(
+        'id',
+        'username',
+        'first_name',
+        'last_name',
+        'email',
+        'profile__full_name',
+        'profile__avatar_url'
+    )
+    
+    agent_list = []
+    for agent in agents:
+        full_name = agent['profile__full_name'] or f"{agent['first_name']} {agent['last_name']}".strip() or agent['username']
+        agent_list.append({
+            'id': agent['id'],
+            'name': full_name,
+            'email': agent['email'],
+            'avatar_url': agent['profile__avatar_url'] or ''
+        })
+    
+    return JsonResponse({'agents': agent_list})
+
+
+@login_required
+def get_teams(request):
+    """Get list of teams/groups for assignment dropdown."""
+    teams = Group.objects.all().values('id', 'name', 'description')
+    
+    team_list = [
+        {
+            'id': team['id'],
+            'name': team['name'],
+            'description': team['description'] or ''
+        }
+        for team in teams
+    ]
+    
+    return JsonResponse({'teams': team_list})
+
+
+@login_required
 def upload_file(request):
-    """Upload a file and return its URL."""
-    import os
+    """Upload a file to files-service and return its URL."""
+    import logging
+    logger = logging.getLogger(__name__)
 
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -293,22 +822,58 @@ def upload_file(request):
         return JsonResponse({'error': 'No file provided'}, status=400)
 
     file = request.FILES['file']
+    category = request.POST.get('category', 'attachments')
 
-    # Generate unique filename
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{timestamp}_{file.name}"
+    try:
+        # Upload to files-service
+        files_service_url = getattr(settings, 'FILES_SERVICE_URL', 'http://localhost:5050')
+        upload_url = f"{files_service_url.rstrip('/')}/api/upload"
 
-    # Save file
-    file_path = os.path.join('uploads', filename)
-    path = default_storage.save(file_path, ContentFile(file.read()))
-    file_url = default_storage.url(path)
+        # Get org name for file storage
+        org = 'default'
 
-    return JsonResponse({
-        'file_url': file_url,
-        'file_name': file.name,
-        'file_size': file.size,
-        'file_type': file.content_type,
-    })
+        response = requests.post(
+            upload_url,
+            files={'file': (file.name, file.read(), file.content_type)},
+            data={'category': category, 'org': org},
+            timeout=60
+        )
+
+        if response.status_code != 201:
+            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+            logger.error(f"Files service upload failed: {error_data}")
+            return JsonResponse({
+                'error': error_data.get('error', 'Failed to upload file')
+            }, status=400)
+
+        result = response.json()
+
+        if not result.get('success'):
+            return JsonResponse({
+                'error': result.get('error', 'Upload failed')
+            }, status=400)
+
+        # Get the first uploaded file
+        uploaded_files = result.get('data', {}).get('uploaded', [])
+        if not uploaded_files:
+            return JsonResponse({'error': 'No file was uploaded'}, status=400)
+
+        uploaded = uploaded_files[0]
+
+        return JsonResponse({
+            'file_url': uploaded.get('url'),
+            'file_name': uploaded.get('original_name'),
+            'file_size': uploaded.get('size'),
+            'file_type': uploaded.get('mime_type'),
+            'file_id': uploaded.get('file_id'),
+        })
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Files service connection error: {e}")
+        return JsonResponse({'error': 'Failed to connect to files service'}, status=500)
+    except Exception as e:
+        logger.error(f"File upload error: {e}")
+        return JsonResponse({'error': 'Failed to upload file'}, status=500)
 
 
 @login_required
@@ -316,6 +881,15 @@ def upload_file(request):
 def add_ticket(request):
     """Add ticket form page."""
     if request.method == 'POST':
+        # Check if web channel is active before allowing ticket creation
+        from modules.settings.models import Channel
+        web_channel = Channel.objects.filter(channel_id='web').first()
+        if not web_channel or not web_channel.is_activated:
+            return JsonResponse({
+                'success': False,
+                'message': 'Web channel is currently inactive. Ticket creation is not allowed.'
+            }, status=400)
+        
         # Inertia sends data as JSON, so check both request.POST and JSON body
         if request.content_type == 'application/json':
             data = json.loads(request.body)
@@ -327,6 +901,7 @@ def add_ticket(request):
             priority = data.get('priority')
             group_id = data.get('group')
             status = data.get('status', 'new')
+            channel_name = data.get('channel', 'web')
             tags = data.get('tags', '[]')
             watchers = data.get('watchers', '[]')
             attachments = data.get('attachments', '[]')
@@ -344,6 +919,7 @@ def add_ticket(request):
             priority = request.POST.get('priority')
             group_id = request.POST.get('group')
             status = request.POST.get('status', 'new')
+            channel_name = request.POST.get('channel', 'web')
             tags = request.POST.get('tags', '[]')
             watchers = request.POST.get('watchers', '[]')
             attachments = request.POST.get('attachments', '[]')
@@ -413,6 +989,12 @@ def add_ticket(request):
                 errors['requester'] = 'Invalid requester'
                 return inertia_render(request, 'AddTicket', {'errors': errors})
 
+        # Get channel by channel_id (default to 'web')
+        from modules.settings.models import Channel
+        channel = None
+        if channel_name:
+            channel = Channel.objects.filter(channel_id__iexact=channel_name).first()
+
         ticket = Ticket.objects.create(
             title=title,
             description=description,
@@ -422,6 +1004,7 @@ def add_ticket(request):
             priority=priority,
             status=status,
             group=Group.objects.get(id=group_id) if group_id else None,
+            channel=channel,
             tags=json.loads(tags) if tags else [],
             # Guest ticket fields
             is_guest_ticket=is_guest_ticket,
@@ -450,10 +1033,16 @@ def add_ticket(request):
 
         return redirect('tickets')
 
-    # GET request - fetch users, departments, and groups for form
+    # GET request - fetch users, departments, groups, and channels for form
+    from modules.settings.models import Channel
     users = User.objects.all().order_by('first_name', 'last_name')
     departments = Department.objects.all().order_by('name')
     groups = Group.objects.all().order_by('name')
+    channels = Channel.objects.filter(is_activated=True, status='active').order_by('order')
+    
+    # Check if web channel is activated
+    web_channel = Channel.objects.filter(channel_id='web').first()
+    web_channel_active = web_channel.is_activated if web_channel else False
 
     # Current user info
     current_user = request.user
@@ -468,29 +1057,40 @@ def add_ticket(request):
         'users': [{'id': u.id, 'name': f"{u.first_name} {u.last_name}".strip() or u.username, 'email': u.email} for u in users],
         'departments': [{'id': d.id, 'name': d.name} for d in departments],
         'groups': [{'id': g.id, 'name': g.name, 'description': g.description} for g in groups],
+        'channels': [{
+            'id': c.id,
+            'channel_id': c.channel_id,
+            'name': c.name,
+            'icon': c.icon,
+            'icon_bg': c.icon_bg,
+            'icon_color': c.icon_color,
+        } for c in channels],
         'currentUser': current_user_data,
+        'webChannelActive': web_channel_active,
     }
 
 
 @login_required
 @inertia('TicketView')
-def ticket_view(request, id: int):
+def ticket_view(request, uuid):
     """Single ticket view with comments, attachments, and activity stream."""
     try:
         ticket_obj = Ticket.objects.select_related(
-            'requester', 'assignee', 'department', 'group'
-        ).prefetch_related('watchers', 'comments__author', 'attachments', 'activities__actor').get(id=id)
+            'requester', 'assignee', 'department', 'group', 'channel'
+        ).prefetch_related('watchers', 'comments__author', 'attachments', 'activities__actor').get(uuid=uuid)
     except Ticket.DoesNotExist:
         return redirect('tickets')
 
     # Serialize ticket data
     ticket_data = {
         'id': ticket_obj.id,
+        'uuid': str(ticket_obj.uuid),
         'ticket_number': ticket_obj.ticket_number or f"#{ticket_obj.id}",
         'title': ticket_obj.title,
         'description': ticket_obj.description,
         'status': ticket_obj.status,
         'status_display': ticket_obj.get_status_display(),
+        'computed_status': ticket_obj.computed_status,
         'priority': ticket_obj.priority,
         'priority_display': ticket_obj.get_priority_display(),
         'type': ticket_obj.type,
@@ -531,10 +1131,21 @@ def ticket_view(request, id: int):
         'is_merged': ticket_obj.is_merged,
         'merged_into': {
             'id': ticket_obj.merged_into.id,
+            'uuid': str(ticket_obj.merged_into.uuid),
             'ticket_number': ticket_obj.merged_into.ticket_number or f"#{ticket_obj.merged_into.id}",
             'title': ticket_obj.merged_into.title,
         } if ticket_obj.merged_into else None,
         'merged_at': ticket_obj.merged_at.strftime('%Y-%m-%d %H:%M') if ticket_obj.merged_at else None,
+        'sla_info': ticket_obj.sla_info,
+        'source': ticket_obj.source,
+        'channel': {
+            'id': ticket_obj.channel.id,
+            'channel_id': ticket_obj.channel.channel_id,
+            'name': ticket_obj.channel.name,
+            'icon': ticket_obj.channel.icon,
+            'icon_bg': ticket_obj.channel.icon_bg,
+            'icon_color': ticket_obj.channel.icon_color,
+        } if ticket_obj.channel else None,
     }
 
     # Serialize comments with nested replies
@@ -633,15 +1244,15 @@ def ticket_view(request, id: int):
                 'first_response_time': sla.policy.first_response_time,
                 'resolution_time': sla.policy.resolution_time,
             },
-            'response_due_at': sla.response_due_at.strftime('%Y-%m-%d %H:%M:%S') if sla.response_due_at else None,
-            'resolution_due_at': sla.resolution_due_at.strftime('%Y-%m-%d %H:%M:%S') if sla.resolution_due_at else None,
+            'response_due_at': sla.response_due_at.isoformat() if sla.response_due_at else None,
+            'resolution_due_at': sla.resolution_due_at.isoformat() if sla.resolution_due_at else None,
             'response_breached': sla.response_breached,
             'resolution_breached': sla.resolution_breached,
             'is_on_hold': sla.is_on_hold,
             'hold_reason': sla.hold_reason,
-            'hold_started_at': sla.hold_started_at.strftime('%Y-%m-%d %H:%M:%S') if sla.hold_started_at else None,
+            'hold_started_at': sla.hold_started_at.isoformat() if sla.hold_started_at else None,
             'total_hold_time': sla.total_hold_time,
-            'created_at': sla.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'created_at': sla.created_at.isoformat(),
         }
 
     return {
@@ -653,6 +1264,160 @@ def ticket_view(request, id: int):
         'groups': groups_data,
         'sla': sla_data,
     }
+
+
+@login_required
+def ticket_detail_api(request, uuid):
+    """API endpoint to return ticket details as JSON for the detailed view panel."""
+    try:
+        ticket_obj = Ticket.objects.select_related(
+            'requester', 'assignee', 'department', 'group', 'channel'
+        ).prefetch_related('watchers', 'comments__author', 'attachments', 'activities__actor').get(uuid=uuid)
+    except Ticket.DoesNotExist:
+        return JsonResponse({'error': 'Ticket not found'}, status=404)
+
+    # Serialize ticket data
+    ticket_data = {
+        'id': ticket_obj.id,
+        'uuid': str(ticket_obj.uuid),
+        'ticket_number': ticket_obj.ticket_number or f"#{ticket_obj.id}",
+        'title': ticket_obj.title,
+        'description': ticket_obj.description,
+        'status': ticket_obj.status,
+        'status_display': ticket_obj.get_status_display(),
+        'computed_status': ticket_obj.computed_status,
+        'priority': ticket_obj.priority,
+        'priority_display': ticket_obj.get_priority_display(),
+        'type': ticket_obj.type,
+        'type_display': ticket_obj.get_type_display(),
+        'tags': ticket_obj.tags,
+        'is_guest_ticket': getattr(ticket_obj, 'is_guest_ticket', False),
+        'guest_name': getattr(ticket_obj, 'guest_name', None),
+        'guest_email': getattr(ticket_obj, 'guest_email', None),
+        'guest_phone': getattr(ticket_obj, 'guest_phone', None),
+        'requester': {
+            'id': ticket_obj.requester.id,
+            'name': f"{ticket_obj.requester.first_name} {ticket_obj.requester.last_name}".strip() or ticket_obj.requester.username,
+            'email': ticket_obj.requester.email,
+        } if ticket_obj.requester else (
+            {
+                'id': None,
+                'name': ticket_obj.guest_name or 'Guest',
+                'email': ticket_obj.guest_email,
+                'is_guest': True,
+            } if getattr(ticket_obj, 'is_guest_ticket', False) else None
+        ),
+        'assignee': {
+            'id': ticket_obj.assignee.id,
+            'name': f"{ticket_obj.assignee.first_name} {ticket_obj.assignee.last_name}".strip() or ticket_obj.assignee.username,
+        } if ticket_obj.assignee else None,
+        'department': ticket_obj.department.name if ticket_obj.department else None,
+        'group': {
+            'id': ticket_obj.group.id,
+            'name': ticket_obj.group.name,
+        } if ticket_obj.group else None,
+        'watchers': [{
+            'id': w.id,
+            'name': f"{w.first_name} {w.last_name}".strip() or w.username
+        } for w in ticket_obj.watchers.all()],
+        'created_at': ticket_obj.created_at.strftime('%Y-%m-%d %H:%M'),
+        'updated_at': ticket_obj.updated_at.strftime('%Y-%m-%d %H:%M'),
+        'is_merged': ticket_obj.is_merged,
+        'sla_info': ticket_obj.sla_info,
+        'source': ticket_obj.source,
+        'channel': {
+            'id': ticket_obj.channel.id,
+            'channel_id': ticket_obj.channel.channel_id,
+            'name': ticket_obj.channel.name,
+            'icon': ticket_obj.channel.icon,
+            'icon_bg': ticket_obj.channel.icon_bg,
+            'icon_color': ticket_obj.channel.icon_color,
+        } if ticket_obj.channel else None,
+    }
+
+    # Serialize comments
+    def serialize_comment(comment):
+        author_data = None
+        if comment.author:
+            author_data = {
+                'id': comment.author.id,
+                'name': f"{comment.author.first_name} {comment.author.last_name}".strip() or comment.author.username,
+            }
+        elif ticket_obj.is_guest_ticket and ticket_obj.guest_name:
+            author_data = {
+                'id': None,
+                'name': ticket_obj.guest_name,
+                'is_guest': True,
+            }
+        
+        return {
+            'id': comment.id,
+            'author': author_data,
+            'message': comment.message,
+            'attachments': comment.attachments,
+            'is_internal': comment.is_internal,
+            'created_at': comment.created_at.strftime('%Y-%m-%d %H:%M'),
+            'replies': [serialize_comment(reply) for reply in comment.replies.all()]
+        }
+
+    top_level_comments = ticket_obj.comments.filter(parent_comment__isnull=True)
+    comments = [serialize_comment(c) for c in top_level_comments]
+
+    # Serialize attachments
+    attachments = [{
+        'id': a.id,
+        'file_url': a.file_url,
+        'file_name': a.file_name,
+        'file_size': a.file_size,
+        'file_type': a.file_type,
+        'is_internal': a.is_internal,
+        'uploaded_by': {
+            'id': a.uploaded_by.id,
+            'name': f"{a.uploaded_by.first_name} {a.uploaded_by.last_name}".strip() or a.uploaded_by.username,
+        } if a.uploaded_by else None,
+        'uploaded_at': a.uploaded_at.strftime('%Y-%m-%d %H:%M'),
+    } for a in ticket_obj.attachments.all()]
+
+    # Serialize activities
+    def get_activity_actor(activity):
+        if activity.actor:
+            return {
+                'id': activity.actor.id,
+                'name': f"{activity.actor.first_name} {activity.actor.last_name}".strip() or activity.actor.username,
+            }
+        elif ticket_obj.is_guest_ticket and ticket_obj.guest_name:
+            return {'id': None, 'name': ticket_obj.guest_name, 'is_guest': True}
+        return {'name': 'System'}
+    
+    activities = [{
+        'id': a.id,
+        'activity_type': a.activity_type,
+        'activity_display': a.get_activity_type_display(),
+        'actor': get_activity_actor(a),
+        'description': a.description,
+        'metadata': a.metadata,
+        'created_at': a.created_at.strftime('%Y-%m-%d %H:%M'),
+    } for a in ticket_obj.activities.all()]
+
+    # Get users and groups for editing
+    users = [{
+        'id': u.id,
+        'name': f"{u.first_name} {u.last_name}".strip() or u.username
+    } for u in User.objects.filter(is_active=True).order_by('first_name', 'last_name')]
+    
+    groups = [{
+        'id': g.id,
+        'name': g.name
+    } for g in Group.objects.all().order_by('name')]
+
+    return JsonResponse({
+        'ticket': ticket_data,
+        'comments': comments,
+        'attachments': attachments,
+        'activities': activities,
+        'users': users,
+        'groups': groups,
+    })
 
 
 def _process_comment_mentions(comment, ticket, mention_ids, author):
@@ -704,14 +1469,13 @@ def _process_comment_mentions(comment, ticket, mention_ids, author):
     
     # Get business info
     try:
-        from shared.models import Client
-        org = Client.get_current()
-        company_name = org.name if org else 'Support'
+        from django.db import connection
+        company_name = Client.get_current().name
     except Exception:
         company_name = 'Support'
     
     base_url = getattr(settings, 'SITE_URL', 'https://app.coredesk.io')
-    ticket_url = f"{base_url}/tickets/{ticket.id}"
+    ticket_url = f"{base_url}/tickets/{ticket.uuid}"
     
     author_name = f"{author.first_name} {author.last_name}".strip() or author.username
     
@@ -751,13 +1515,13 @@ def _process_comment_mentions(comment, ticket, mention_ids, author):
 
 
 @login_required
-def ticket_add_comment(request, id: int):
+def ticket_add_comment(request, uuid):
     """Add a comment to a ticket."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
@@ -776,14 +1540,15 @@ def ticket_add_comment(request, id: int):
         parent_id = request.POST.get('parent_id')
         mention_ids = json.loads(request.POST.get('mentions', '[]'))
 
-    if not message:
-        return JsonResponse({'error': 'Message is required'}, status=400)
-
     # Parse attachments
     try:
         attachments_data = json.loads(attachments_json) if isinstance(attachments_json, str) else attachments_json
     except json.JSONDecodeError:
         attachments_data = []
+
+    # Require either message or attachments
+    if not message and not attachments_data:
+        return JsonResponse({'error': 'Message or attachments required'}, status=400)
 
     # Get parent comment if this is a reply
     parent_comment = None
@@ -811,12 +1576,12 @@ def ticket_add_comment(request, id: int):
 
 
 @login_required
-def ticket_upload_attachment(request, id: int):
+def ticket_upload_attachment(request, uuid):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
@@ -861,36 +1626,102 @@ def ticket_upload_attachment(request, id: int):
 
 
 @login_required
-def ticket_update_status(request, id: int):
+def ticket_update_status(request, uuid):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
     new_status = request.POST.get('status')
     if new_status not in dict(Ticket.Status.choices):
         return JsonResponse({'error': 'Invalid status'}, status=400)
+    
+    # Users cannot manually set status to 'closed' - only crons can close tickets
+    if new_status == 'closed':
+        return JsonResponse({'error': 'Tickets can only be closed automatically. Use Resolved instead.'}, status=400)
 
+    old_status = ticket.status
+    old_status_display = ticket.get_status_display()
+    
+    # Handle reopening - if going from resolved/closed back to open statuses
+    is_reopening = old_status in ['resolved', 'closed'] and new_status in ['new', 'open', 'in_progress', 'pending']
+    
     ticket.status = new_status
+    
+    # If reopening, clear resolved_at
+    if is_reopening and ticket.resolved_at:
+        ticket.resolved_at = None
+    
+    # If resolving, set resolved_at
+    if new_status == 'resolved' and not ticket.resolved_at:
+        from django.utils import timezone
+        ticket.resolved_at = timezone.now()
+    
     ticket.save()
+    
+    # Handle SLA pause/resume on status change
+    if old_status != new_status:
+        try:
+            sla = getattr(ticket, 'sla', None)
+            if sla:
+                # Pause SLA when ticket goes on hold (pending)
+                if new_status == 'pending' and old_status != 'pending':
+                    sla.hold('Ticket placed on hold')
+                # Resume SLA when ticket leaves hold (pending)
+                elif old_status == 'pending' and new_status not in ['pending', 'closed', 'resolved']:
+                    sla.resume()
+                # Pause SLA when ticket is closed or resolved
+                elif new_status in ['closed', 'resolved'] and old_status not in ['closed', 'resolved']:
+                    sla.hold(f'Ticket {new_status}')
+                # Resume SLA when reopening from closed/resolved
+                elif is_reopening:
+                    sla.resume()
+        except Exception:
+            pass
+    
+    # Log activity for status change
+    if old_status != new_status:
+        if is_reopening:
+            ActivityStream.objects.create(
+                ticket=ticket,
+                activity_type=ActivityStream.ActivityType.REOPENED,
+                actor=request.user,
+                description=f"Reopened ticket (was {old_status_display})",
+                metadata={
+                    'old_value': old_status,
+                    'new_value': new_status,
+                }
+            )
+        else:
+            ActivityStream.objects.create(
+                ticket=ticket,
+                activity_type=ActivityStream.ActivityType.STATUS_CHANGED,
+                actor=request.user,
+                description=f"Changed status from {old_status_display} to {ticket.get_status_display()}",
+                metadata={
+                    'old_value': old_status,
+                    'new_value': new_status,
+                }
+            )
 
     return JsonResponse({
         'status': ticket.status,
         'status_display': ticket.get_status_display(),
+        'reopened': is_reopening,
     })
 
 
 @login_required
-def ticket_update_fields(request, id: int):
+def ticket_update_fields(request, uuid):
     """Update ticket fields: assignee, watchers, tags, type, priority, group."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
@@ -992,10 +1823,10 @@ def ticket_update_fields(request, id: int):
 
 
 @login_required
-def get_ticket_work_items(request, ticket_id: int):
+def get_ticket_work_items(request, uuid):
     """Get all work items for a ticket."""
     try:
-        ticket = Ticket.objects.get(id=ticket_id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
@@ -1025,13 +1856,13 @@ def get_ticket_work_items(request, ticket_id: int):
 
 
 @login_required
-def create_work_item(request, ticket_id: int):
+def create_work_item(request, uuid):
     """Create a work item for a ticket."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=ticket_id)
+        ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
@@ -1072,13 +1903,13 @@ def create_work_item(request, ticket_id: int):
 
 
 @login_required
-def update_work_item(request, ticket_id: int, work_item_id: int):
+def update_work_item(request, uuid, work_item_id: int):
     """Update a work item."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
     try:
-        ticket = Ticket.objects.get(id=ticket_id)
+        ticket = Ticket.objects.get(uuid=uuid)
         work_item = WorkItem.objects.get(id=work_item_id, ticket=ticket)
     except (Ticket.DoesNotExist, WorkItem.DoesNotExist):
         return JsonResponse({'error': 'Work item not found'}, status=404)
@@ -1143,7 +1974,7 @@ def update_work_item(request, ticket_id: int, work_item_id: int):
 def ticket_search_for_merge(request):
     """Search tickets for merge functionality."""
     query = request.GET.get('q', '').strip()
-    exclude_id = request.GET.get('exclude', None)
+    exclude_uuid = request.GET.get('exclude', None)
     
     if len(query) < 2:
         return JsonResponse({'tickets': []})
@@ -1158,8 +1989,8 @@ def ticket_search_for_merge(request):
         merged_into__isnull=False  # Exclude already merged tickets
     )
     
-    if exclude_id:
-        tickets = tickets.exclude(id=exclude_id)
+    if exclude_uuid:
+        tickets = tickets.exclude(uuid=exclude_uuid)
     
     tickets = tickets[:10]  # Limit results
     
@@ -1167,6 +1998,7 @@ def ticket_search_for_merge(request):
         'tickets': [
             {
                 'id': t.id,
+                'uuid': str(t.uuid),
                 'ticket_number': t.ticket_number,
                 'title': t.title,
                 'status': t.status,
@@ -1183,13 +2015,13 @@ def ticket_search_for_merge(request):
 
 
 @login_required
-def ticket_merge(request, id: int):
+def ticket_merge(request, uuid):
     """Merge a ticket into another ticket."""
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
     
     try:
-        source_ticket = Ticket.objects.get(id=id)
+        source_ticket = Ticket.objects.get(uuid=uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
     
@@ -1202,12 +2034,12 @@ def ticket_merge(request, id: int):
     else:
         data = request.POST
     
-    target_ticket_id = data.get('target_ticket_id')
-    if not target_ticket_id:
+    target_ticket_uuid = data.get('target_ticket_uuid')
+    if not target_ticket_uuid:
         return JsonResponse({'error': 'Target ticket is required'}, status=400)
     
     try:
-        target_ticket = Ticket.objects.get(id=target_ticket_id)
+        target_ticket = Ticket.objects.get(uuid=target_ticket_uuid)
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Target ticket not found'}, status=404)
     
@@ -1273,6 +2105,14 @@ def ticket_merge(request, id: int):
             'source_ticket_id': source_ticket.id,
             'source_ticket_number': source_ticket.ticket_number,
         }
+    )
+    
+    # Send merge notification (checks notify_ticket_merged setting)
+    from modules.ticket.signals import send_ticket_merged_notification
+    send_ticket_merged_notification(
+        primary_ticket=target_ticket,
+        merged_tickets=[source_ticket],
+        merged_by=request.user
     )
     
     return JsonResponse({

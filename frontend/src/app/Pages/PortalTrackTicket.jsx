@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import toast from 'react-hot-toast';
+import api from '../../utils/axios';
 import { useTimezone } from '../context/TimezoneContext';
 
 const THEME = {
@@ -54,19 +55,13 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/portal/add-comment/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ticket_number: ticket.ticket_number,
-          email: search.email,
-          message: newComment,
-        }),
+      const response = await api.post('/portal/add-comment/', {
+        ticket_number: ticket.ticket_number,
+        email: search.email,
+        message: newComment,
       });
 
-      const data = await response.json();
+      const data = response.data;
 
       if (data.success) {
         toast.success('Comment added successfully');
@@ -191,7 +186,7 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
                 {/* Sidebar with helpful info */}
                 <div className="space-y-6">
                   {/* Status Guide */}
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                  <div className="bg-white -sm border border-gray-200 p-6">
                     <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
                       📊 Ticket Status Guide
                     </h3>
@@ -216,7 +211,7 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
                   </div>
 
                   {/* Help Card */}
-                  <div className="rounded-lg shadow-sm border-2 p-6" style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', borderColor: THEME.primary }}>
+                  <div className="-sm border-2 p-6" style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', borderColor: THEME.primary }}>
                     <div className="flex items-center gap-2 mb-3">
                       <span className="text-2xl">💡</span>
                       <h3 className="text-lg font-semibold" style={{ color: THEME.primary }}>
@@ -236,7 +231,7 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
                   </div>
 
                   {/* Contact Info */}
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                  <div className="bg-white -sm border border-gray-200 p-6">
                     <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
                       📞 Other Ways to Reach Us
                     </h3>
@@ -259,7 +254,7 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
           {ticket && (
             <>
               {/* Ticket Header */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
+              <div className="bg-white -sm border border-gray-200 mb-6">
                 <div className="p-6 border-b border-gray-200">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -302,14 +297,15 @@ export default function PortalTrackTicket({ ticket, comments, activity_logs, sea
                 {/* Description */}
                 <div className="p-6">
                   <h3 className="text-sm font-semibold text-gray-700 mb-2">Description</h3>
-                  <div className="text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    {ticket.description}
-                  </div>
+                  <div 
+                    className="text-sm text-gray-600 bg-gray-50 p-4 rounded-lg border border-gray-200 prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: ticket.description }}
+                  />
                 </div>
               </div>
 
               {/* Tabs */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div className="bg-white -sm border border-gray-200">
                 <div className="border-b border-gray-200">
                   <nav className="flex -mb-px">
                     <button

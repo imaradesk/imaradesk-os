@@ -14,6 +14,8 @@ class OnboardingMiddleware:
     # URLs that should be accessible even without a business registered
     EXEMPT_URLS = [
         '/onboarding/',
+        '/quick-start/',
+        '/api/onboarding/',
         '/static/',
         '/media/',
         '/admin/',

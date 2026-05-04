@@ -10,6 +10,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
 from django.views.decorators.http import require_http_methods
 from inertia import inertia, render as inertia_render
 
+
 @login_required
 @inertia('Index')
 def index(request):
@@ -965,6 +966,9 @@ def onboarding(request):
     from shared.models import Client
     from django.core.management import call_command
     from modules.users.models import Group, Role, UserProfile
+
+
+    print("=== Onboarding Check ===")
     
     # If business already exists, redirect to login
     if Client.objects.exists():

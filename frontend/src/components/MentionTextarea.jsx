@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import Avatar from './Avatar'
 import { COLORS } from '../app/constants/theme'
+import api from '../utils/axios'
 
 /**
  * Get caret (cursor) pixel coordinates in a textarea
@@ -107,9 +108,8 @@ const MentionTextarea = forwardRef(({
         const url = searchQuery 
           ? `/tickets/mentions/search/?q=${encodeURIComponent(searchQuery)}&limit=8`
           : `/tickets/mentions/search/?limit=8`
-        const response = await fetch(url)
-        const data = await response.json()
-        setUsers(data.users || [])
+        const response = await api.get(url)
+        setUsers(response.data.users || [])
         setSelectedIndex(0)
         setShowDropdown(true)
       } catch (err) {
@@ -295,7 +295,7 @@ const MentionTextarea = forwardRef(({
         {showDropdown && (
           <div 
             ref={dropdownRef}
-            className="absolute z-50 w-72 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg"
+            className="absolute z-50 w-72 max-h-64 overflow-y-auto bg-white border border-gray-200 -lg"
             style={{ 
               top: `${dropdownCoords.top}px`,
               left: `${Math.min(dropdownCoords.left, 100)}px` // Cap left position to avoid overflow

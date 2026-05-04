@@ -33,6 +33,11 @@ class Command(BaseCommand):
             action='store_true',
             help='Initialize default views for tickets, tasks, and KB',
         )
+        parser.add_argument(
+            '--init-channels',
+            action='store_true',
+            help='Seed default communication channels (web, email)',
+        )
 
     def handle(self, *args, **options):
         # Create or get organization
@@ -45,6 +50,7 @@ class Command(BaseCommand):
             self.seed_marketplace_apps()
             self.seed_email_templates(reseed=False)
             self.init_views()
+            self.init_channels()
             self.stdout.write(self.style.SUCCESS('\n=== Initialization Complete ==='))
             return
         
@@ -60,6 +66,9 @@ class Command(BaseCommand):
         
         if options.get('init_views'):
             self.init_views()
+        
+        if options.get('init_channels'):
+            self.init_channels()
 
     def seed_marketplace_apps(self):
         """Seed marketplace apps."""
@@ -166,4 +175,15 @@ class Command(BaseCommand):
         
         self.stdout.write(self.style.SUCCESS(
             f'  ✓ Created: {created_count}, Updated: {updated_count}'
+        ))
+
+    def init_channels(self):
+        """Seed default communication channels."""
+        from modules.settings.models import Channel
+
+        self.stdout.write(self.style.SUCCESS('\n--- Initializing Channels ---'))
+
+        created, updated, deleted = Channel.seed_default_channels()
+        self.stdout.write(self.style.SUCCESS(
+            f'  ✓ Created: {created}, Updated: {updated}, Deleted: {deleted}'
         ))

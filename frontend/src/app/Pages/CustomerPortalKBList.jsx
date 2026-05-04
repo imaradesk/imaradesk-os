@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Head, Link, router } from '@inertiajs/react';
 import { THEME, COLORS } from '../constants/theme';
+import LucideIcon from '../components/LucideIcon';
 
 export default function CustomerPortalKBList({ portal_settings, categories = [], articles = [], selectedCategory = null }) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,7 +28,7 @@ export default function CustomerPortalKBList({ portal_settings, categories = [],
       
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
-        <header className="relative py-8 md:py-12 lg:py-16 px-4 md:px-8 lg:px-12 overflow-hidden" style={{ background: `linear-gradient(135deg, ${COLORS.primary} 0%, ${COLORS.primaryLight} 100%)` }}>
+        <header className="relative py-8 md:py-12 lg:py-16 px-4 md:px-8 lg:px-12 overflow-hidden" style={{ background: COLORS.primary }}>
           <div className="absolute right-0 top-0 bottom-0 w-1/2 flex items-center justify-end opacity-20 hidden md:flex">
             {[...Array(7)].map((_, i) => (
               <svg key={i} className="h-full" style={{ width: '80px', marginLeft: '-20px' }} viewBox="0 0 100 500">
@@ -124,7 +125,7 @@ export default function CustomerPortalKBList({ portal_settings, categories = [],
                         style={selectedCategory === category.id ? { backgroundColor: COLORS.primary } : {}}
                       >
                         <div className="flex items-center gap-3">
-                          <span className="text-xl">{category.icon || '📁'}</span>
+                          <LucideIcon name={category.icon || 'Folder'} className="w-5 h-5" />
                           <span className="font-medium truncate">{category.name}</span>
                         </div>
                         <span className={`inline-flex items-center justify-center rounded-full text-xs px-2.5 py-1 font-medium ${
@@ -162,15 +163,25 @@ export default function CustomerPortalKBList({ portal_settings, categories = [],
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {articles.map((article) => (
                     <Link
-                      key={article.id}
-                      href={`/portal/kb/${article.id}/`}
+                      key={article.uuid}
+                      href={`/portal/kb/${article.uuid}/`}
                       className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow group"
                     >
-                      {/* Article Icon/Image */}
-                      <div className="h-40 bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center relative">
-                        <div className="text-white text-5xl">📄</div>
-                        {article.views && (
-                          <div className="absolute top-3 right-3 bg-white bg-opacity-20 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1.5">
+                      {/* Article Image */}
+                      <div className={`h-40 ${!article.display_image ? 'bg-gray-100' : ''} flex items-center justify-center relative`}>
+                        {article.display_image ? (
+                          <img
+                            src={article.display_image}
+                            alt={article.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <svg className="w-16 h-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        )}
+                        {article.views > 0 && (
+                          <div className="absolute top-3 right-3 bg-black/40 backdrop-blur-sm px-3 py-1 rounded-full flex items-center gap-1.5">
                             <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
                               <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
