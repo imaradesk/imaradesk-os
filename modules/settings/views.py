@@ -1769,7 +1769,7 @@ def install_app(request, app_id):
         
         return JsonResponse({
             'success': True,
-            'message': f'{app.name} installed successfully! You have 14 days free trial.',
+            'message': f'{app.name} installed successfully!',
             'installed_app': {
                 'id': installed_app.id,
                 'app_name': app.name,

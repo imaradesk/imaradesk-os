@@ -1,17 +1,15 @@
-"""
-Onboarding Middleware - Redirects to onboarding if no business is registered.
-"""
+"""Onboarding Middleware - Redirects to onboarding if no business is registered,
+and to quick-start if onboarding is not complete."""
 from django.shortcuts import redirect
-from django.urls import reverse
 
 
 class OnboardingMiddleware:
     """
-    Middleware that checks if a business/organization exists.
-    If not, redirects all requests to the onboarding page.
+    Middleware that:
+    1. Redirects to /onboarding/ if no business exists
+    2. Redirects to /quick-start/ if onboarding is not complete
     """
     
-    # URLs that should be accessible even without a business registered
     EXEMPT_URLS = [
         '/onboarding/',
         '/quick-start/',
@@ -21,6 +19,7 @@ class OnboardingMiddleware:
         '/admin/',
         '/health/',
         '/favicon.ico',
+        '/logout/',
     ]
     
     def __init__(self, get_response):
@@ -28,30 +27,39 @@ class OnboardingMiddleware:
         self._business_exists = None
     
     def __call__(self, request):
-        # Skip check for exempt URLs
         path = request.path
         if any(path.startswith(url) for url in self.EXEMPT_URLS):
             return self.get_response(request)
         
-        # Check if business exists (cache the result for performance)
+        # Check if business exists (cache the result)
         if self._business_exists is None:
             self._business_exists = self._check_business_exists()
         
-        # If no business exists, redirect to onboarding
         if not self._business_exists:
-            # Re-check in case business was just created
             self._business_exists = self._check_business_exists()
             if not self._business_exists:
                 return redirect('/onboarding/')
         
+        # Check if authenticated admin has completed onboarding
+        if request.user.is_authenticated and request.user.is_superuser:
+            if not self._is_onboarding_complete(request.user):
+                return redirect('/quick-start/')
+        
         return self.get_response(request)
     
     def _check_business_exists(self):
-        """Check if at least one organization exists in the database."""
+        """Check if at least one organization exists."""
         try:
             from shared.models import Client
-            print(f"This =======================> {Client.objects.exists()}")
             return Client.objects.exists()
         except Exception:
-            # If there's a database error, assume onboarding is needed
             return False
+    
+    def _is_onboarding_complete(self, user):
+        """Check if onboarding is complete for this user."""
+        try:
+            from modules.onboarding.models import OnboardingProgress
+            progress, _ = OnboardingProgress.objects.get_or_create(user=user)
+            return progress.is_complete
+        except Exception:
+            return True  # Don't block on errors

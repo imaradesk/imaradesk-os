@@ -1141,8 +1141,12 @@ def onboarding(request):
             # Log the user in automatically
             login(request, user)
             
-            # Redirect to dashboard
-            return redirect('index')
+            # Create onboarding progress for the new user
+            from modules.onboarding.models import OnboardingProgress
+            OnboardingProgress.objects.get_or_create(user=user)
+            
+            # Redirect to quick start wizard
+            return redirect('quick_start')
             
         except Exception as e:
             print(f"✗ Onboarding error: {e}")
