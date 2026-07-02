@@ -293,6 +293,11 @@ def index(request):
 @inertia('Login')
 def login_view(request):
     """User login page (GET + POST)."""
+    # Redirect to onboarding if no users exist (fresh install)
+    from django.contrib.auth.models import User
+    if not User.objects.exists():
+        return redirect('onboarding')
+
     # Check if organization is verified before allowing login attempts
     try:
         from shared.models import Client
@@ -961,17 +966,18 @@ def export_reports(request):
 def onboarding(request):
     """
     Onboarding page for first-time setup.
-    Shows if no business is registered in the system.
+    Shows if no users exist in the system (fresh install).
     """
+    from django.contrib.auth.models import User
     from shared.models import Client
     from django.core.management import call_command
     from modules.users.models import Group, Role, UserProfile
 
 
     print("=== Onboarding Check ===")
-    
-    # If business already exists, redirect to login
-    if Client.objects.exists():
+
+    # If any users already exist, redirect to login
+    if User.objects.exists():
         return redirect('login')
     
     if request.method == 'POST':
