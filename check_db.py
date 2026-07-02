@@ -15,23 +15,17 @@ RETRY_DELAY = int(os.environ.get('DB_CONNECT_RETRY_DELAY', '2'))
 
 def get_db_config():
     """Read database config from environment variables (same as Django settings)."""
-    driver = os.environ.get('DB_DRIVER', 'postgres').lower().strip()
-    engine_map = {
-        'postgres': 'django.db.backends.postgresql',
-        'postgresql': 'django.db.backends.postgresql',
-        'pgsql': 'django.db.backends.postgresql',
-        'mysql': 'django.db.backends.mysql',
-    }
+    engine = os.environ.get('DB_ENGINE', 'django.db.backends.postgresql')
     default_ports = {
         'django.db.backends.postgresql': 5432,
         'django.db.backends.mysql': 3306,
     }
-    engine = os.environ.get('DB_ENGINE', engine_map.get(driver, 'django.db.backends.postgresql'))
     default_port = default_ports.get(engine, 5432)
+    driver_name = 'PostgreSQL' if 'postgresql' in engine else 'MySQL'
 
     return {
         'engine': engine,
-        'driver': driver,
+        'driver': driver_name.lower(),
         'name': os.environ.get('DB_NAME', 'imaradesk'),
         'user': os.environ.get('DB_USER', 'postgres'),
         'password': os.environ.get('DB_PASSWORD', ''),
@@ -94,10 +88,10 @@ def main():
     # Determine which checker to use
     if 'postgresql' in cfg['engine']:
         check_fn = check_postgresql
-        driver_name = 'PostgreSQL'
+        display_name = 'PostgreSQL'
     elif 'mysql' in cfg['engine']:
         check_fn = check_mysql
-        driver_name = 'MySQL/MariaDB'
+        display_name = 'MySQL/MariaDB'
     else:
         print(f"[ERROR] Unsupported database engine: {cfg['engine']}")
         print("  Supported engines: django.db.backends.postgresql, django.db.backends.mysql")
@@ -107,7 +101,7 @@ def main():
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            print(f"[{attempt}/{MAX_RETRIES}] Attempting to connect to {driver_name} on {cfg['host']}:{cfg['port']}...")
+            print(f"[{attempt}/{MAX_RETRIES}] Attempting to connect to {display_name} on {cfg['host']}:{cfg['port']}...")
             version = check_fn(cfg)
             print(f"  ✓ Connected successfully!")
             print(f"  ✓ Server version: {version}")

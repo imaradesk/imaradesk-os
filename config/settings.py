@@ -124,45 +124,20 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# =========================
-# Database Driver Configuration
-# =========================
-# DB_DRIVER simplifies choosing the database:
-#   'postgres' (default) → django.db.backends.postgresql
-#   'mysql'              → django.db.backends.mysql
-# You can also set DB_ENGINE directly for full control.
-_DB_DRIVER = config('DB_DRIVER', default='postgres').lower().strip()
-_DB_ENGINE_MAP = {
-    'postgres': 'django.db.backends.postgresql',
-    'postgresql': 'django.db.backends.postgresql',
-    'pgsql': 'django.db.backends.postgresql',
-    'mysql': 'django.db.backends.mysql',
-}
-_DB_ENGINE = config('DB_ENGINE', default=_DB_ENGINE_MAP.get(_DB_DRIVER, 'django.db.backends.postgresql'))
-
-# Default ports per driver
-_DEFAULT_PORTS = {
-    'django.db.backends.postgresql': '5432',
-    'django.db.backends.mysql': '3306',
-}
-
 DATABASES = {
     'default': {
-        'ENGINE': _DB_ENGINE,
+        'ENGINE': config('DB_ENGINE', default='django.db.backends.postgresql'),
         'NAME': config('DB_NAME', default='imaradesk'),
         'USER': config('DB_USER', default='postgres'),
         'PASSWORD': config('DB_PASSWORD', default=''),
         'HOST': config('DB_HOST', default='127.0.0.1'),
-        'PORT': config('DB_PORT', default=_DEFAULT_PORTS.get(_DB_ENGINE, '5432')),
+        'PORT': config('DB_PORT', default='5432'),
     }
 }
 
 _db_init_command = config('DB_OPTIONS_INIT_COMMAND', default='')
 if _db_init_command:
     DATABASES['default']['OPTIONS'] = {'init_command': _db_init_command}
-
-# Print database driver info
-print(f"[ImaraDesk] Database driver: {_DB_ENGINE} (DB_DRIVER={_DB_DRIVER})")
 
 # imanidesk_90009
 
