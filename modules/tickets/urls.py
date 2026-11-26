@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path('tickets/', views.tickets, name='tickets'),
     path('tickets/new/', views.add_ticket, name='add_ticket'),
+    path('tickets/api/list/', views.tickets_list_api, name='tickets_list_api'),
     path('tickets/bulk/mark-draft/', views.bulk_mark_draft, name='bulk_mark_draft'),
     path('tickets/bulk/remove-draft/', views.bulk_remove_draft, name='bulk_remove_draft'),
     path('tickets/bulk/assign-agent/', views.bulk_assign_agent, name='bulk_assign_agent'),
@@ -18,6 +19,7 @@ urlpatterns = [
     path('tickets/<uuid:uuid>/', views.ticket_view, name='ticket_view'),
     path('tickets/<uuid:uuid>/detail-api/', views.ticket_detail_api, name='ticket_detail_api'),
     path('tickets/<uuid:uuid>/comment/', views.ticket_add_comment, name='ticket_add_comment'),
+    path('tickets/<uuid:uuid>/comment/<int:comment_id>/', views.ticket_comment_detail, name='ticket_comment_detail'),
     path('tickets/<uuid:uuid>/attachment/', views.ticket_upload_attachment, name='ticket_upload_attachment'),
     path('tickets/<uuid:uuid>/status/', views.ticket_update_status, name='ticket_update_status'),
     path('tickets/<uuid:uuid>/update/', views.ticket_update_fields, name='ticket_update_fields'),
@@ -26,6 +28,7 @@ urlpatterns = [
     path('tickets/<uuid:uuid>/work-items/', views.get_ticket_work_items, name='get_ticket_work_items'),
     path('tickets/<uuid:uuid>/work-items/create/', views.create_work_item, name='create_work_item'),
     path('tickets/<uuid:uuid>/work-items/<int:work_item_id>/update/', views.update_work_item, name='update_work_item'),
+    path('tickets/mentions/<int:user_id>/', views.mentioned_user_card, name='mentioned_user_card'),
     path('tickets/mentions/search/', views.search_mentionable_users, name='search_mentionable_users'),
     path('upload/', views.upload_file, name='upload_file'),
 ]

@@ -4,6 +4,7 @@ Tasks views - Task management functionality
 import json
 from datetime import datetime
 
+from shared.utilities.organization import site_url
 from django.shortcuts import redirect
 from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
@@ -13,194 +14,106 @@ from django.core.paginator import Paginator
 from inertia import inertia
 
 from shared.decorators import require_app
-from modules.tasks.models import Task, TaskComment, TaskAttachment, TaskActivityStream
+from modules.tasks import services
+from modules.tasks.models import Task, TaskType, TaskComment, TaskAttachment, TaskActivityStream
 from modules.users.models import Group
+
+import logging
+logger = logging.getLogger(__name__)
+
+
+def _agent_display_name(user):
+    """Return the agent's real name, falling back to username (never email)."""
+    profile = getattr(user, 'profile', None)
+    full_name = (getattr(profile, 'full_name', '') or '').strip()
+    if full_name:
+        return full_name
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return name or user.username
+
+
+def _wants_json(request):
+    """XHR/JSON request that is not an Inertia visit."""
+    if request.headers.get('X-Inertia'):
+        return False
+    return (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or 'application/json' in request.META.get('HTTP_ACCEPT', '')
+    )
+
+
+def _task_ticket_links(task):
+    """Ticket/work-item records linked to a task, in the shape the UI expects."""
+    return {
+        'related_ticket': services.serialize_ticket_summary(task.related_ticket),
+        'converted_from_ticket': services.serialize_ticket_summary(task.converted_from_ticket),
+        'converted_to_ticket': services.serialize_ticket_summary(task.converted_to_ticket),
+        'converted_to_work_item': services.serialize_work_item_summary(task.converted_to_work_item),
+    }
 
 
 @require_app('tasks-projects')
 @login_required
 @inertia('Tasks')
 def tasks(request):
-    """Tasks listing page."""
+    """Tasks listing page (list, card and board views)."""
     # Load active views from database first to determine default
     from modules.settings.models import SettingsView
     active_views = SettingsView.objects.filter(type='TASK', is_active=True).order_by('order')
-    
+
     # Get default view: first check is_default, then fallback to first view
     default_view = active_views.filter(is_default=True).first()
     if not default_view:
         default_view = active_views.first()
     default_view_id = default_view.view_id if default_view else 'all'
-    
-    # Get filter parameter, fallback to default view
+
     view = request.GET.get('view', default_view_id)
     page_number = request.GET.get('page', 1)
-    per_page = 15
 
-    # Base queryset (exclude drafts by default)
-    tasks_qs = Task.objects.select_related('created_by', 'assignee', 'group').prefetch_related('watchers').exclude(status='draft')
-    
-    # Count drafts separately (for the Drafts view in sidebar)
-    drafts_count = Task.objects.filter(status='draft').count()
+    tasks_qs = services.apply_task_view(
+        services.task_queryset().prefetch_related('watchers'), view, request.user
+    )
+    tasks_qs = services.filter_tasks(tasks_qs, request.GET, request.user)
+    tasks_qs, sort = services.sort_tasks(tasks_qs, request.GET.get('sort', 'created'))
 
-    # Apply filters based on view
-    if view == 'drafts':
-        # For drafts view, show only draft tasks
-        tasks_qs = Task.objects.select_related('created_by', 'assignee', 'group').prefetch_related('watchers').filter(status='draft')
-    elif view == 'my_tasks':
-        tasks_qs = tasks_qs.filter(assignee=request.user)
-    elif view == 'created_by_me':
-        tasks_qs = tasks_qs.filter(created_by=request.user)
-    elif view == 'watching':
-        tasks_qs = tasks_qs.filter(watchers=request.user)
-    elif view == 'todo':
-        tasks_qs = tasks_qs.filter(status=Task.Status.TODO)
-    elif view == 'in_progress':
-        tasks_qs = tasks_qs.filter(status=Task.Status.IN_PROGRESS)
-    elif view == 'review':
-        tasks_qs = tasks_qs.filter(status=Task.Status.REVIEW)
-    elif view == 'done':
-        tasks_qs = tasks_qs.filter(status=Task.Status.DONE)
-    elif view == 'high_priority':
-        tasks_qs = tasks_qs.filter(priority__in=[Task.Priority.HIGH, Task.Priority.URGENT])
-    elif view == 'overdue':
-        tasks_qs = tasks_qs.filter(due_date__lt=timezone.now().date(), status__in=[Task.Status.TODO, Task.Status.IN_PROGRESS])
+    page_obj, pagination = services.paginate(
+        tasks_qs, page_number, request.GET.get('per_page', services.DEFAULT_PER_PAGE)
+    )
+    tasks_data = [services.serialize_task_row(task) for task in page_obj]
 
-    # Apply additional filters from URL parameters
-    task_number = request.GET.get('taskNumber', '').strip()
-    status_filter = request.GET.get('status', '').strip()
-    priority_filter = request.GET.get('priority', '').strip()
-    assignee_filter = request.GET.get('assignee', '').strip()
-    date_from = request.GET.get('dateFrom', '').strip()
-    date_to = request.GET.get('dateTo', '').strip()
+    counters = services.task_counts(request.user)
+    workspace = services.workspace_sidebar(request.user, counts=counters)
 
-    if task_number:
-        tasks_qs = tasks_qs.filter(id__icontains=task_number)
-    
-    if status_filter:
-        tasks_qs = tasks_qs.filter(status=status_filter)
-    
-    if priority_filter:
-        tasks_qs = tasks_qs.filter(priority=priority_filter)
-    
-    if assignee_filter:
-        if assignee_filter == 'unassigned':
-            tasks_qs = tasks_qs.filter(assignee__isnull=True)
-        elif assignee_filter == 'me':
-            tasks_qs = tasks_qs.filter(assignee=request.user)
-    
-    if date_from:
-        tasks_qs = tasks_qs.filter(created_at__date__gte=date_from)
-    
-    if date_to:
-        tasks_qs = tasks_qs.filter(created_at__date__lte=date_to)
-
-    tasks_qs = tasks_qs.order_by('-created_at')
-
-    # Paginate tasks
-    paginator = Paginator(tasks_qs, per_page)
-    page_obj = paginator.get_page(page_number)
-
-    # Serialize tasks
-    tasks_data = [
+    views_list = [
         {
-            'id': task.id,
-            'uuid': str(task.uuid),
-            'title': task.title,
-            'description': task.description[:200] + '...' if len(task.description) > 200 else task.description,
-            'status': task.status,
-            'status_display': task.get_status_display(),
-            'priority': task.priority,
-            'priority_display': task.get_priority_display(),
-            'created_by': {
-                'id': task.created_by.id,
-                'name': f"{task.created_by.first_name} {task.created_by.last_name}".strip() or task.created_by.username,
-            } if task.created_by else None,
-            'assignee': {
-                'id': task.assignee.id,
-                'name': f"{task.assignee.first_name} {task.assignee.last_name}".strip() or task.assignee.username,
-            } if task.assignee else None,
-            'group': {
-                'id': task.group.id,
-                'name': task.group.name,
-            } if task.group else None,
-            'tags': task.tags,
-            'due_date': task.due_date.strftime('%Y-%m-%d') if task.due_date else None,
-            'created_at': task.created_at.strftime('%Y-%m-%d %H:%M'),
-            'updated_at': task.updated_at.strftime('%Y-%m-%d %H:%M'),
+            'id': saved['id'],
+            'label': saved['label'],
+            'count': saved['count'] or 0,
+            'is_default': saved['is_default'],
+            'active': view == saved['id'],
         }
-        for task in page_obj
+        for saved in workspace['saved_views']
     ]
 
-    # Calculate counters (exclude drafts)
-    all_tasks = Task.objects.exclude(status='draft')
-    counters = {
-        'all': all_tasks.count(),
-        'my_tasks': all_tasks.filter(assignee=request.user).count(),
-        'created_by_me': all_tasks.filter(created_by=request.user).count(),
-        'watching': all_tasks.filter(watchers=request.user).count(),
-        'todo': all_tasks.filter(status=Task.Status.TODO).count(),
-        'in_progress': all_tasks.filter(status=Task.Status.IN_PROGRESS).count(),
-        'review': all_tasks.filter(status=Task.Status.REVIEW).count(),
-        'done': all_tasks.filter(status=Task.Status.DONE).count(),
-        'high_priority': all_tasks.filter(priority__in=[Task.Priority.HIGH, Task.Priority.URGENT]).count(),
+    filters = {
+        key: request.GET.get(key, '')
+        for key in ('search', 'taskNumber', 'status', 'priority', 'type', 'assignee', 'project', 'due', 'dateFrom', 'dateTo')
     }
-
-    # Calculate overdue tasks count
-    overdue_count = all_tasks.filter(
-        due_date__lt=timezone.now().date(),
-        status__in=[Task.Status.TODO, Task.Status.IN_PROGRESS]
-    ).count()
-
-    # Build views list with counts
-    views_list = []
-    for task_view in active_views:
-        count = 0
-        if task_view.view_id == 'all':
-            count = counters['all']
-        elif task_view.view_id == 'my_tasks':
-            count = counters['my_tasks']
-        elif task_view.view_id == 'created_by_me':
-            count = counters['created_by_me']
-        elif task_view.view_id == 'watching':
-            count = counters['watching']
-        elif task_view.view_id == 'todo':
-            count = counters['todo']
-        elif task_view.view_id == 'in_progress':
-            count = counters['in_progress']
-        elif task_view.view_id == 'review':
-            count = counters['review']
-        elif task_view.view_id == 'done':
-            count = counters['done']
-        elif task_view.view_id == 'high_priority':
-            count = counters['high_priority']
-        elif task_view.view_id == 'overdue':
-            count = overdue_count
-
-        views_list.append({
-            'id': task_view.view_id,
-            'label': task_view.label,
-            'count': count,
-            'is_default': task_view.is_default,
-            'active': view == task_view.view_id,
-        })
 
     return {
         'sidebar': {
             'views': views_list,
         },
+        'workspace': workspace,
         'tasks': tasks_data,
         'counters': counters,
         'currentView': view,
-        'draftsCount': drafts_count,
-        'pagination': {
-            'current_page': page_obj.number,
-            'total_pages': paginator.num_pages,
-            'per_page': per_page,
-            'total_count': paginator.count,
-            'has_next': page_obj.has_next(),
-            'has_previous': page_obj.has_previous(),
-        }
+        'draftsCount': counters['drafts'],
+        'filters': filters,
+        'sort': sort,
+        'projects': services.project_options(),
+        'users': [services.serialize_user(u) for u in User.objects.filter(is_active=True).order_by('first_name', 'last_name')],
+        'pagination': pagination,
     }
 
 
@@ -229,7 +142,8 @@ def bulk_mark_draft(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @require_app('tasks-projects')
@@ -257,81 +171,61 @@ def bulk_remove_draft(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
+
+
+@require_app('tasks-projects')
+@login_required
+def task_types(request):
+    """GET lists the workspace's task types; POST creates one (used by the "Add type" dialog)."""
+    if request.method == 'GET':
+        return JsonResponse({'types': services.task_type_options()})
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    try:
+        data = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    task_type, errors = services.create_task_type(data)
+    if errors:
+        return JsonResponse({'error': next(iter(errors.values())), 'errors': errors}, status=400)
+    return JsonResponse({'success': True, 'type': services.serialize_task_type(task_type)}, status=201)
 
 
 @require_app('tasks-projects')
 @login_required
 @inertia('AddTask')
 def add_task(request):
-    """Add task form page."""
+    """Add task form page. POST creates the task through the shared service."""
     if request.method == 'POST':
         if request.content_type == 'application/json':
-            data = json.loads(request.body)
+            try:
+                data = json.loads(request.body or '{}')
+            except json.JSONDecodeError:
+                return JsonResponse({'error': 'Invalid JSON'}, status=400)
         else:
             data = request.POST
 
-        title = data.get('title')
-        description = data.get('description')
-        assignee_id = data.get('assignee')
-        priority = data.get('priority', 'normal')
-        group_id = data.get('group')
-        tags_data = data.get('tags', '[]')
-        due_date_str = data.get('due_date')
-        watcher_ids = data.get('watchers', '[]')
-        status = data.get('status', 'todo')  # Default to 'todo' if not provided
+        task, errors = services.create_task(request.user, data)
+        if errors:
+            return JsonResponse({'error': next(iter(errors.values())), 'errors': errors}, status=400)
 
-        # Parse due_date string to date object
-        due_date = datetime.strptime(due_date_str, '%Y-%m-%d').date() if due_date_str else None
-
-        # Validation
-        if not title or not description:
-            return JsonResponse({'error': 'Title and Description are required'}, status=400)
-
-        # Parse tags
-        try:
-            tags = json.loads(tags_data) if isinstance(tags_data, str) else tags_data
-        except json.JSONDecodeError:
-            tags = []
-
-        # Parse watchers
-        try:
-            watchers = json.loads(watcher_ids) if isinstance(watcher_ids, str) else watcher_ids
-        except json.JSONDecodeError:
-            watchers = []
-
-        # Create task
-        task = Task.objects.create(
-            title=title,
-            description=description,
-            created_by=request.user,
-            assignee=User.objects.get(id=assignee_id) if assignee_id else None,
-            priority=priority,
-            group=Group.objects.get(id=group_id) if group_id else None,
-            tags=tags,
-            due_date=due_date if due_date else None,
-            status=status,
-        )
-
-        # Add watchers
-        if watchers:
-            task.watchers.set(User.objects.filter(id__in=watchers))
-
+        # XHR callers (quick add, board column, project tasks tab) get JSON;
+        # the Inertia form keeps its redirect to the task page.
+        if _wants_json(request):
+            return JsonResponse({'success': True, 'task': services.serialize_task_row(task)}, status=201)
         return redirect('task_view', uuid=task.uuid)
 
     # GET request - show form
     groups = Group.objects.all()
-    users = User.objects.all().order_by('first_name', 'last_name')
+    users = User.objects.filter(is_active=True).order_by('first_name', 'last_name')
 
     return {
         'groups': [{'id': g.id, 'name': g.name} for g in groups],
-        'users': [
-            {
-                'id': u.id,
-                'name': f"{u.first_name} {u.last_name}".strip() or u.username
-            }
-            for u in users
-        ],
+        'users': [services.serialize_user(u) for u in users],
+        'projects': services.project_options(),
+        'defaultProject': request.GET.get('project', ''),
     }
 
 
@@ -342,7 +236,8 @@ def task_view(request, uuid):
     """Single task view with comments, attachments, and activity stream."""
     try:
         task = Task.objects.select_related(
-            'created_by', 'assignee', 'group', 'related_ticket', 'converted_from_ticket'
+            'created_by', 'assignee', 'group', 'related_ticket', 'converted_from_ticket',
+            'converted_to_ticket', 'converted_to_work_item__ticket', 'project', 'task_type',
         ).prefetch_related('watchers', 'comments__author', 'attachments', 'activities__actor').get(uuid=uuid)
     except Task.DoesNotExist:
         return redirect('tasks')
@@ -357,6 +252,7 @@ def task_view(request, uuid):
         'status_display': task.get_status_display(),
         'priority': task.priority,
         'priority_display': task.get_priority_display(),
+        'task_type': services.serialize_task_type(task.task_type),
         'tags': task.tags,
         'created_by': {
             'id': task.created_by.id,
@@ -379,14 +275,13 @@ def task_view(request, uuid):
         'completed_at': task.completed_at.strftime('%Y-%m-%d %H:%M') if task.completed_at else None,
         'created_at': task.created_at.strftime('%Y-%m-%d %H:%M'),
         'updated_at': task.updated_at.strftime('%Y-%m-%d %H:%M'),
-        'related_ticket': {
-            'id': task.related_ticket.id,
-            'title': task.related_ticket.title,
-        } if task.related_ticket else None,
-        'converted_from_ticket': {
-            'id': task.converted_from_ticket.id,
-            'title': task.converted_from_ticket.title,
-        } if task.converted_from_ticket else None,
+        **_task_ticket_links(task),
+        'project': {
+            'uuid': str(task.project.uuid),
+            'name': task.project.name,
+            'status': task.project.status,
+            'is_archived': task.project.is_archived,
+        } if task.project_id else None,
     }
 
     # Serialize comments with nested replies
@@ -455,6 +350,8 @@ def task_view(request, uuid):
         'activities': activities,
         'users': users_data,
         'groups': groups_data,
+        'projects': services.project_options(),
+        'related_tasks': services.related_tasks(task),
     }
 
 
@@ -474,6 +371,7 @@ def task_form_data(request):
             }
             for u in users
         ],
+        'projects': services.project_options(),
     })
 
 
@@ -483,7 +381,8 @@ def task_api(request, uuid):
     """API endpoint for fetching task data as JSON (for modal view)."""
     try:
         task = Task.objects.select_related(
-            'created_by', 'assignee', 'group', 'related_ticket', 'converted_from_ticket'
+            'created_by', 'assignee', 'group', 'related_ticket', 'converted_from_ticket',
+            'converted_to_ticket', 'converted_to_work_item__ticket', 'project', 'task_type',
         ).prefetch_related('watchers', 'comments__author', 'attachments', 'activities__actor').get(uuid=uuid)
     except Task.DoesNotExist:
         return JsonResponse({'error': 'Task not found'}, status=404)
@@ -498,6 +397,7 @@ def task_api(request, uuid):
         'status_display': task.get_status_display(),
         'priority': task.priority,
         'priority_display': task.get_priority_display(),
+        'task_type': services.serialize_task_type(task.task_type),
         'tags': task.tags,
         'created_by': {
             'id': task.created_by.id,
@@ -520,14 +420,13 @@ def task_api(request, uuid):
         'completed_at': task.completed_at.strftime('%Y-%m-%d %H:%M') if task.completed_at else None,
         'created_at': task.created_at.strftime('%Y-%m-%d %H:%M'),
         'updated_at': task.updated_at.strftime('%Y-%m-%d %H:%M'),
-        'related_ticket': {
-            'id': task.related_ticket.id,
-            'title': task.related_ticket.title,
-        } if task.related_ticket else None,
-        'converted_from_ticket': {
-            'id': task.converted_from_ticket.id,
-            'title': task.converted_from_ticket.title,
-        } if task.converted_from_ticket else None,
+        **_task_ticket_links(task),
+        'project': {
+            'uuid': str(task.project.uuid),
+            'name': task.project.name,
+            'status': task.project.status,
+            'is_archived': task.project.is_archived,
+        } if task.project_id else None,
     }
 
     # Serialize comments with nested replies
@@ -596,6 +495,7 @@ def task_api(request, uuid):
         'activities': activities,
         'users': users_data,
         'groups': groups_data,
+        'projects': services.project_options(),
     })
 
 
@@ -612,20 +512,61 @@ def task_update_fields(request, uuid):
         return JsonResponse({'error': 'Task not found'}, status=404)
 
     if request.content_type == 'application/json':
-        data = json.loads(request.body)
+        try:
+            data = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
     else:
         data = request.POST
 
     # Update fields if provided
     if 'assignee' in data:
         assignee_id = data.get('assignee')
-        task.assignee = User.objects.get(id=assignee_id) if assignee_id else None
+        if assignee_id:
+            assignee = User.objects.filter(id=services.parse_int(assignee_id), is_active=True).first()
+            if assignee is None:
+                return JsonResponse({'error': 'Assignee must be an active member of this workspace.'}, status=400)
+            task.assignee = assignee
+        else:
+            task.assignee = None
 
     if 'status' in data:
+        if data.get('status') not in Task.Status.values:
+            return JsonResponse({'error': 'Invalid status'}, status=400)
         task.status = data.get('status')
 
     if 'priority' in data:
+        if data.get('priority') not in Task.Priority.values:
+            return JsonResponse({'error': 'Invalid priority'}, status=400)
         task.priority = data.get('priority')
+
+    if 'task_type' in data:
+        task_type = TaskType.objects.filter(pk=services.parse_int(data.get('task_type')), is_active=True).first()
+        if task_type is None:
+            return JsonResponse({'error': 'Invalid type'}, status=400)
+        task.task_type = task_type
+
+    if 'project' in data:
+        project, project_error = services.resolve_project_for_task(
+            data.get('project'), current_project_id=task.project_id
+        )
+        if project_error:
+            return JsonResponse({'error': project_error}, status=400)
+        task.project = project
+
+    if 'title' in data:
+        title = (data.get('title') or '').strip()
+        if not title or len(title) > 255:
+            return JsonResponse({'error': 'Title is required (max 255 characters).'}, status=400)
+        task.title = title
+
+    if 'description' in data:
+        description = data.get('description') or ''
+        if not isinstance(description, str) or not description.strip():
+            return JsonResponse({'error': 'Description is required.'}, status=400)
+        if len(description) > 100000:
+            return JsonResponse({'error': 'Description is too long.'}, status=400)
+        task.description = description
 
     if 'group' in data:
         group_id = data.get('group')
@@ -634,7 +575,9 @@ def task_update_fields(request, uuid):
     if 'due_date' in data:
         due_date_value = data.get('due_date')
         if due_date_value:
-            new_due_date = datetime.strptime(due_date_value, '%Y-%m-%d').date()
+            new_due_date, due_error = services.parse_date(due_date_value)
+            if due_error:
+                return JsonResponse({'error': due_error}, status=400)
             if new_due_date != task.due_date:
                 task.due_soon_notification_sent = False
                 task.overdue_notification_sent = False
@@ -655,7 +598,67 @@ def task_update_fields(request, uuid):
 
     task.save()
 
-    return JsonResponse({'success': True})
+    task = services.task_queryset().get(pk=task.pk)
+    return JsonResponse({'success': True, 'task': services.serialize_task_row(task)})
+
+
+def _process_task_comment_mentions(comment, task, mention_ids, author):
+    """Store mentioned users on a task comment and email them."""
+    import logging
+    from django.conf import settings
+    from django.utils.html import strip_tags
+    from modules.settings.models import EmailTemplate, NotificationSettings
+    from shared.utilities.Mailer import Mailer
+
+    logger = logging.getLogger(__name__)
+    try:
+        ids = [int(i) for i in mention_ids]
+    except (TypeError, ValueError):
+        return
+
+    # Don't notify the author about their own mention
+    mentioned = User.objects.filter(id__in=ids, is_active=True).exclude(id=author.id)
+    if not mentioned.exists():
+        return
+    comment.mentions.set(mentioned)
+
+    try:
+        if not NotificationSettings.get_settings().notify_ticket_mentioned:
+            return
+    except Exception:
+        pass
+
+    try:
+        template = EmailTemplate.objects.get(template_type='user_mentioned', status='active')
+    except EmailTemplate.DoesNotExist:
+        return
+
+    base_url = site_url()
+    author_name = _agent_display_name(author)
+    preview = strip_tags(comment.message or '').replace('&nbsp;', ' ').strip()
+    mailer = Mailer()
+
+    for user in mentioned:
+        if not user.email:
+            continue
+        try:
+            subject, html, text = template.render({
+                'user_name': _agent_display_name(user),
+                'mentioned_by': author_name,
+                'ticket_number': f"Task {task.title}",
+                'ticket_subject': task.title,
+                'comment_preview': preview[:200] + ('...' if len(preview) > 200 else ''),
+                'ticket_url': f"{base_url}/tasks/{task.uuid}",
+                'company_name': 'Support',
+            })
+            mailer.send_raw_email(
+                to_email=user.email,
+                subject=subject or f'You were mentioned in task {task.title}',
+                html_content=html or '',
+                text_content=text or '',
+            )
+        except Exception as e:
+            logger.error(f"Failed to send mention notification to {user.email}: {e}")
 
 
 @require_app('tasks-projects')
@@ -677,11 +680,16 @@ def task_add_comment(request, uuid):
         is_internal = data.get('is_internal', False)
         attachments_json = data.get('attachments', '[]')
         parent_id = data.get('parent_id')
+        mention_ids = data.get('mentions', [])
     else:
         message = request.POST.get('message', '').strip()
         is_internal = request.POST.get('is_internal') == 'true'
         attachments_json = request.POST.get('attachments', '[]')
         parent_id = request.POST.get('parent_id')
+        try:
+            mention_ids = json.loads(request.POST.get('mentions', '[]'))
+        except json.JSONDecodeError:
+            mention_ids = []
 
     if not message:
         return JsonResponse({'error': 'Message is required'}, status=400)
@@ -701,7 +709,7 @@ def task_add_comment(request, uuid):
             pass
 
     # Create comment
-    TaskComment.objects.create(
+    comment = TaskComment.objects.create(
         task=task,
         author=request.user,
         message=message,
@@ -709,6 +717,9 @@ def task_add_comment(request, uuid):
         attachments=attachments_data,
         parent_comment=parent_comment
     )
+
+    if mention_ids:
+        _process_task_comment_mentions(comment, task, mention_ids, request.user)
 
     # Create activity stream entry
     TaskActivityStream.objects.create(
@@ -720,6 +731,28 @@ def task_add_comment(request, uuid):
     )
 
     return JsonResponse({'success': True})
+
+
+@require_app('tasks-projects')
+@login_required
+def task_comment_detail(request, uuid, comment_id):
+    """Toggle visibility (PATCH) or delete (DELETE) a task comment."""
+    try:
+        comment = TaskComment.objects.get(id=comment_id, task__uuid=uuid)
+    except TaskComment.DoesNotExist:
+        return JsonResponse({'error': 'Comment not found'}, status=404)
+
+    if request.method == 'DELETE':
+        comment.delete()
+        return JsonResponse({'success': True})
+    if request.method == 'PATCH':
+        data = json.loads(request.body or '{}')
+        if 'is_internal' in data:
+            comment.is_internal = bool(data['is_internal'])
+            comment.save(update_fields=['is_internal'])
+            comment.replies.update(is_internal=comment.is_internal)
+        return JsonResponse({'success': True})
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
 
 
 @require_app('tasks-projects')
@@ -772,9 +805,71 @@ def task_upload_attachment(request, uuid):
 
 @require_app('tasks-projects')
 @login_required
+def task_convert_to_ticket(request, uuid):
+    """Create a ticket from a task and link the two records."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        task = Task.objects.select_related('created_by', 'group').get(uuid=uuid)
+    except Task.DoesNotExist:
+        return JsonResponse({'error': 'Task not found'}, status=404)
+
+    if request.content_type == 'application/json':
+        try:
+            data = json.loads(request.body or '{}')
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+    else:
+        data = request.POST
+
+    ticket, errors = services.convert_task_to_ticket(task, request.user, data)
+    if errors:
+        return JsonResponse({'errors': errors}, status=400)
+
+    return JsonResponse({
+        'success': True,
+        'ticket': services.serialize_ticket_summary(ticket),
+    }, status=201)
+
+
+@require_app('tasks-projects')
+@login_required
+def task_convert_to_work_item(request, uuid):
+    """Create a ticket work item from a task and link the two records."""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        task = Task.objects.select_related(
+            'created_by', 'related_ticket', 'converted_from_ticket', 'converted_to_ticket',
+        ).get(uuid=uuid)
+    except Task.DoesNotExist:
+        return JsonResponse({'error': 'Task not found'}, status=404)
+
+    if request.content_type == 'application/json':
+        try:
+            data = json.loads(request.body or '{}')
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid JSON body'}, status=400)
+    else:
+        data = request.POST
+
+    work_item, errors = services.convert_task_to_work_item(task, request.user, data)
+    if errors:
+        return JsonResponse({'errors': errors}, status=400)
+
+    return JsonResponse({
+        'success': True,
+        'work_item': services.serialize_work_item_summary(work_item),
+    }, status=201)
+
+
+@require_app('tasks-projects')
+@login_required
 def convert_ticket_to_task(request, ticket_uuid):
     """Convert a ticket to a task."""
-    from modules.ticket.models import Ticket
+    from modules.ticket.models import ActivityStream, Ticket
 
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -791,6 +886,7 @@ def convert_ticket_to_task(request, ticket_uuid):
         created_by=request.user,
         assignee=ticket.assignee,
         priority=ticket.priority,
+        task_type=TaskType.default(),
         tags=ticket.tags,
         converted_from_ticket=ticket,
     )
@@ -798,11 +894,20 @@ def convert_ticket_to_task(request, ticket_uuid):
     # Add watchers
     task.watchers.set(ticket.watchers.all())
 
-    # Update ticket to reference the task
-    ticket.converted_to_task = task
-    ticket.save()
+    ActivityStream.objects.create(
+        ticket=ticket,
+        activity_type=ActivityStream.ActivityType.TICKET_UPDATED,
+        actor=request.user,
+        description=f"Converted to task TASK-{task.id} \"{task.title}\"",
+        metadata={'task_id': task.id, 'task_uuid': str(task.uuid)},
+    )
 
-    return JsonResponse({'success': True, 'task_id': task.id})
+    return JsonResponse({
+        'success': True,
+        'task_id': task.id,
+        'task_uuid': str(task.uuid),
+        'task_title': task.title,
+    })
 
 
 @require_app('tasks-projects')
@@ -834,6 +939,7 @@ def create_task_from_ticket(request, ticket_uuid):
         created_by=request.user,
         assignee=ticket.assignee,
         priority=ticket.priority,
+        task_type=TaskType.default(),
         tags=ticket.tags,
         related_ticket=ticket,
     )

@@ -1,162 +1,170 @@
-import React, { useState } from 'react'
-import { Head, Link, router } from '@inertiajs/react'
-import AppShell from '../components/AppShell'
-import KBSidebar from '../components/KBSidebar'
-import ArticleCard from '../components/ArticleCard'
+import React, { useMemo, useState } from 'react'
+import { Head } from '@inertiajs/react'
+import { Plus, Search, X, Files, SlidersHorizontal } from 'lucide-react'
+import KBLayout, { PageHeader, ArticleFormButton } from '../components/kb/KBLayout'
+import ArticleList from '../components/kb/ArticleList'
+import KBOnboarding from '../components/kb/KBOnboarding'
+import { VIEW_ICONS, ARTICLE_STATUSES, ARTICLE_SORTS, CONTROL } from '../components/kb/constants'
+import { EmptyState, CategoryIcon, PRIMARY_BTN } from '../components/kb/ui'
+import SimpleSelect from '../components/SimpleSelect'
 import { Popover } from '../../components/Popover'
-import { THEME, COLORS } from '../constants/theme'
+
+const initialSearch = () => {
+  if (typeof window === 'undefined') return ''
+  return new URLSearchParams(window.location.search).get('search') || ''
+}
 
 export default function KBArticles({
-  articles = [], 
-  sidebar = { views: [] }, 
+  articles = [],
+  sidebar = {},
   currentView = 'all',
+  currentCategory = null,
   pendingCount = 0,
-  viewTitle = 'All Articles'
+  viewTitle = 'All articles',
 }) {
-  const [searchQuery, setSearchQuery] = useState('')
+  const [search, setSearch] = useState(initialSearch)
+  const [status, setStatus] = useState('')
+  const [category, setCategory] = useState('')
+  const [sort, setSort] = useState('newest')
 
-  const filteredArticles = articles.filter(article => 
-    article.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (article.category && article.category.toLowerCase().includes(searchQuery.toLowerCase()))
-  )
+  // Status filter only makes sense on views that mix statuses
+  const showStatus = currentView === 'all' || currentView === 'my_articles'
+  const categoryNames = useMemo(() => [...new Set(articles.map((a) => a.category).filter(Boolean))].sort(), [articles])
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const list = articles.filter((a) => (
+      (!q || a.title.toLowerCase().includes(q) || (a.summary || '').toLowerCase().includes(q) || (a.category || '').toLowerCase().includes(q))
+      && (!status || a.status === status)
+      && (!category || a.category === category)
+    ))
+    if (sort === 'views') return [...list].sort((a, b) => (b.views || 0) - (a.views || 0))
+    if (sort === 'title') return [...list].sort((a, b) => a.title.localeCompare(b.title))
+    return list
+  }, [articles, search, status, category, sort])
+
+  const filtered = !!(search || status || category)
+  const filterCount = (showStatus && status ? 1 : 0) + (category ? 1 : 0)
+  const clear = () => { setSearch(''); setStatus(''); setCategory('') }
+  const ViewIcon = VIEW_ICONS[currentView] || Files
+  const icon = currentCategory
+    ? <CategoryIcon icon={currentCategory.icon} size="w-7 h-7" iconSize="w-3.5 h-3.5" />
+    : (
+      <span className="w-8 h-8 rounded-lg bg-[#0B3D26]/10 text-[#0B3D26] inline-flex items-center justify-center flex-shrink-0">
+        <ViewIcon className="w-4 h-4" />
+      </span>
+    )
+  const prefill = currentCategory ? { category: currentCategory.id } : null
+  const isEmpty = articles.length === 0
+  const kbHasArticles = (sidebar.counts?.all || 0) > 0
 
   return (
     <>
-      <Head title={`KB - ${viewTitle}`} />
-      <AppShell active="knowledgebase">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          <KBSidebar 
-            views={sidebar.views} 
-            currentView={currentView} 
-            activePage="articles" 
-            pendingCount={pendingCount} 
-          />
-          <main className="flex-1 bg-gray-50">
-            {/* Header */}
-            <div className="bg-white border-b border-gray-200 px-6 py-6">
-              <div className="">
-                <div className="flex items-center gap-3 mb-4">
-                  <Link href="/knowledgebase/" className="text-gray-500 hover:text-gray-900 text-sm">
-                    Knowledge Base
-                  </Link>
-                  <span className="text-gray-400">/</span>
-                  <span className="text-gray-900 text-sm">{viewTitle}</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-4">{viewTitle}</h1>
-                
-                {/* Search */}
-                <div className="relative max-w-xl">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search articles..."
-                    className="w-full px-4 py-3 pr-12  border border-gray-300 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
-                  />
-                  <svg className="absolute right-4 top-3.5 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
+      <Head title={viewTitle} />
+      <KBLayout sidebar={sidebar} pendingCount={pendingCount}>
+        <PageHeader
+          title={viewTitle}
+          subtitle={currentCategory?.description || `${articles.length} article${articles.length === 1 ? '' : 's'}`}
+          icon={icon}
+          actions={(
+            <ArticleFormButton prefill={prefill} className={PRIMARY_BTN}>
+              <Plus className="w-4 h-4" /> New article
+              <kbd className="hidden sm:inline ml-1 text-[10px] px-1 rounded bg-white/20 font-sans">C</kbd>
+            </ArticleFormButton>
+          )}
+        >
+          {!isEmpty && (
+            <div className="px-4 sm:px-6 py-2 flex flex-wrap items-center gap-2 border-t border-gray-100">
+              <div className="relative flex-1 min-w-0 sm:flex-none sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search articles"
+                  aria-label="Search articles"
+                  className={`${CONTROL} w-full pl-8`}
+                />
               </div>
-            </div>
-
-            {/* Content */}
-            <div className="px-6 py-8">
-              <div className="mb-6 flex items-center justify-between">
-                <p className="text-gray-600">
-                  {filteredArticles.length} article{filteredArticles.length !== 1 ? 's' : ''} found
-                </p>
-                <Link
-                  href="/knowledgebase/article/new/"
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-md ${THEME.button.primary}`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
-                  New Article
-                </Link>
-              </div>
-
-              {filteredArticles.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredArticles.map((article) => (
-                    <ArticleCard 
-                      key={article.id} 
-                      article={article} 
-                      showStatus 
-                      showFeatured 
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-white  border border-gray-200 p-12 text-center">
-                  <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                  </svg>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No articles found</h3>
-                  <p className="text-gray-600 mb-6">
-                    {searchQuery 
-                      ? 'Try adjusting your search query.' 
-                      : 'Get started by creating your first knowledge base article.'}
-                  </p>
-                  <Link
-                    href="/knowledgebase/article/new/"
-                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-md ${THEME.button.primary}`}
+              <Popover
+                width={280}
+                maxHeight={380}
+                strategy="fixed"
+                showArrow={true}
+                trigger={({ toggle }) => (
+                  <button
+                    type="button"
+                    onClick={toggle}
+                    title="Filters"
+                    aria-label="Filters"
+                    className={`h-8 px-2.5 inline-flex items-center gap-1.5 text-xs rounded-md border transition-colors ${
+                      filterCount > 0
+                        ? 'border-[#0B3D26] bg-[#0B3D26]/5 text-[#0B3D26]'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    Create Article
-                  </Link>
-                </div>
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    {filterCount > 0 && <span className="font-medium">{filterCount}</span>}
+                  </button>
+                )}
+              >
+                {() => (
+                  <div className="p-4 space-y-3">
+                    <div className="text-sm font-medium text-gray-900">Filters</div>
+                    {showStatus && (
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Status</div>
+                        <SimpleSelect compact className="w-full" value={status} onChange={setStatus} options={ARTICLE_STATUSES.slice(0, 3)} emptyLabel="Any status" ariaLabel="Filter by status" />
+                      </div>
+                    )}
+                    {!currentCategory && categoryNames.length > 1 && (
+                      <div>
+                        <div className="text-xs text-gray-500 mb-1">Category</div>
+                        <SimpleSelect compact className="w-full" value={category} onChange={setCategory} options={categoryNames.map((c) => ({ id: c, name: c }))} emptyLabel="Any category" ariaLabel="Filter by category" />
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-xs text-gray-500 mb-1">Sort by</div>
+                      <SimpleSelect compact className="w-full" value={sort} onChange={setSort} options={ARTICLE_SORTS} ariaLabel="Sort articles" />
+                    </div>
+                  </div>
+                )}
+              </Popover>
+              {filtered && (
+                <button onClick={clear} className="h-8 px-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800">
+                  <X className="w-3.5 h-3.5" /> Clear
+                </button>
               )}
             </div>
-          </main>
-        </div>
+          )}
+        </PageHeader>
 
-        {/* Floating Action Button */}
-        <div className="fixed bottom-6 right-6 z-50">
-          <Popover
-            width={180}
-            maxHeight={200}
-            showArrow={false}
-            trigger={({ open, toggle }) => (
-              <button
-                onClick={toggle}
-                className={`w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-white transition-transform hover:scale-105 ${
-                  open ? 'rotate-45' : ''
-                }`}
-                style={{ backgroundColor: COLORS.primary }}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-6 h-6">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-              </button>
+        {isEmpty ? (
+          <KBOnboarding
+            category={currentCategory?.id}
+            {...(kbHasArticles && {
+              title: currentCategory ? `No articles in ${currentCategory.name} yet` : `No ${viewTitle.toLowerCase()} yet`,
+              description: 'Write one from scratch, or start from an article support teams commonly publish.',
+            })}
+          />
+        ) : rows.length > 0 ? (
+          <>
+            <ArticleList articles={rows} />
+            {filtered && (
+              <p className="px-4 sm:px-6 py-2.5 border-t border-gray-100 text-xs text-gray-500 tabular-nums">
+                Showing {rows.length} of {articles.length}
+              </p>
             )}
-          >
-            {({ close }) => (
-              <div className="py-1">
-                <Link
-                  href="/knowledgebase/article/new/"
-                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-gray-700"
-                  onClick={close}
-                >
-                  <span className="text-lg">📝</span>
-                  <span className="text-sm font-medium">New Article</span>
-                </Link>
-                <Link
-                  href="/knowledgebase/categories/"
-                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 text-gray-700"
-                  onClick={close}
-                >
-                  <span className="text-lg">📁</span>
-                  <span className="text-sm font-medium">New Category</span>
-                </Link>
-              </div>
-            )}
-          </Popover>
-        </div>
-      </AppShell>
+          </>
+        ) : (
+          <EmptyState
+            icon={Search}
+            title="No articles match these filters"
+            description="Try a different search or clear the filters."
+            action={<button onClick={clear} className="text-sm text-[#0B3D26] hover:underline">Clear filters</button>}
+          />
+        )}
+      </KBLayout>
     </>
   )
 }

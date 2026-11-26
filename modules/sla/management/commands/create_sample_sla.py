@@ -17,9 +17,9 @@ class Command(BaseCommand):
         # Create SLA Policies
         policies = [
             {
-                'name': 'Critical Priority SLA',
-                'priority': 'critical',
-                'description': 'For critical issues affecting business operations',
+                'name': 'Urgent Priority SLA',
+                'priority': 'urgent',
+                'description': 'For urgent issues affecting business operations',
                 'first_response_time': 60,  # 1 hour
                 'resolution_time': 240,  # 4 hours
                 'status': 'active',

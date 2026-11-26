@@ -5,6 +5,7 @@ from inertia import inertia, render as inertia_render
 from django.contrib.auth import get_user_model
 from .models import UserProfile, Organization, Role, Group
 from .permissions import Permission
+from shared.utilities.uploads import store_image_data, UploadError
 
 User = get_user_model()
 
@@ -60,44 +61,6 @@ def user_list(request):
             'has_next': page.has_next(),
             'has_prev': page.has_previous(),
         },
-    }
-
-
-@login_required
-@inertia('People')
-def role_list(request):
-    roles_qs = Role.objects.all()
-    roles = [
-        {
-            'id': r.id,
-            'name': r.name,
-            'description': r.description,
-            'permissions': r.permissions if isinstance(r.permissions, list) else [],
-            'is_system': r.is_system,
-        }
-        for r in roles_qs
-    ]
-    permissions_grouped = Permission.get_grouped()
-    
-    # Include orgs and groups for user drawer
-    orgs = list(Organization.objects.all().values('id', 'name'))
-    groups_qs = Group.objects.all()
-    groups = [
-        {
-            'id': g.id,
-            'name': g.name,
-            'description': g.description,
-            'member_count': g.members.count(),
-        }
-        for g in groups_qs
-    ]
-
-    return {
-        'activeTab': 'roles',
-        'roles': roles,
-        'permissions': permissions_grouped,
-        'orgs': orgs,
-        'groups': groups,
     }
 
 
@@ -233,6 +196,7 @@ def user_edit(request, id: int):
     except (User.DoesNotExist, UserProfile.DoesNotExist):
         return redirect('user_list')
 
+    form_errors = {}
     if request.method == 'POST':
         full_name = request.POST.get('full_name')
         email = request.POST.get('email')
@@ -240,28 +204,31 @@ def user_edit(request, id: int):
         org_id = request.POST.get('organization')
         group_ids = request.POST.getlist('groups')
 
-        user.email = email or user.email
-        profile.full_name = full_name or profile.full_name
-        profile.is_agent = is_agent
-        if org_id:
-            try:
-                profile.organization = Organization.objects.get(id=org_id)
-            except Organization.DoesNotExist:
-                pass
-        else:
-            profile.organization = None
-        
-        # Update groups
-        if group_ids:
-            groups = Group.objects.filter(id__in=group_ids)
-            profile.groups.set(groups)
-        else:
-            profile.groups.clear()
-        
-        profile.save()
-        user.save(update_fields=['email'])
-        return redirect('user_list')
-    
+
+        if not form_errors:
+            user.email = email or user.email
+            profile.full_name = full_name or profile.full_name
+            profile.is_agent = is_agent
+            if org_id:
+                try:
+                    profile.organization = Organization.objects.get(id=org_id)
+                except Organization.DoesNotExist:
+                    pass
+            else:
+                profile.organization = None
+
+            # Update groups
+            if group_ids:
+                groups = Group.objects.filter(id__in=group_ids)
+                profile.groups.set(groups)
+            else:
+                profile.groups.clear()
+
+            profile.save()
+            user.save(update_fields=['email'])
+            return redirect('user_list')
+
+
     # GET request - show form with existing data
     orgs = list(Organization.objects.all().values('id', 'name'))
     groups_qs = Group.objects.all()
@@ -287,6 +254,7 @@ def user_edit(request, id: int):
         },
         'orgs': orgs,
         'groups': groups,
+        'errors': form_errors,
     }
 
 
@@ -300,85 +268,6 @@ def user_delete(request, id: int):
             pass
     return redirect('user_list')
 
-
-# Role CRUD views
-@login_required
-def role_create(request):
-    """Create a new role."""
-    if request.method == 'POST':
-        name = request.POST.get('name')
-        description = request.POST.get('description', '')
-        permissions = request.POST.getlist('permissions')
-        
-        errors = {}
-        if not name:
-            errors['name'] = 'Role name is required'
-        elif Role.objects.filter(name=name).exists():
-            errors['name'] = 'Role name already exists'
-        
-        if errors:
-            return inertia_render(request, 'People', {
-                'errors': errors,
-            })
-        
-        Role.objects.create(
-            name=name,
-            description=description,
-            permissions=permissions,
-        )
-        return redirect('role_list')
-    
-    return redirect('role_list')
-
-
-@login_required
-def role_edit(request, id: int):
-    """Edit an existing role."""
-    try:
-        role = Role.objects.get(id=id)
-    except Role.DoesNotExist:
-        return redirect('user_list')
-    
-    if request.method == 'POST':
-        name = request.POST.get('name')
-        description = request.POST.get('description', '')
-        permissions = request.POST.getlist('permissions')
-        
-        errors = {}
-        if not name:
-            errors['name'] = 'Role name is required'
-        elif Role.objects.filter(name=name).exclude(id=id).exists():
-            errors['name'] = 'Role name already exists'
-        
-        if role.is_system:
-            errors['name'] = 'System roles cannot be edited'
-        
-        if errors:
-            return inertia_render(request, 'People', {
-                'errors': errors,
-            })
-        
-        role.name = name
-        role.description = description
-        role.permissions = permissions
-        role.save()
-        return redirect('role_list')
-    
-    return redirect('role_list')
-
-
-@login_required
-def role_delete(request, id: int):
-    """Delete a role."""
-    if request.method == 'POST':
-        try:
-            role = Role.objects.get(id=id)
-            if role.is_system:
-                return redirect('role_list')
-            role.delete()
-        except Role.DoesNotExist:
-            pass
-    return redirect('role_list')
 
 @login_required
 @inertia('UserPermissions')
@@ -445,6 +334,11 @@ def group_create(request):
         
         if errors:
             return inertia_render(request, 'People', {
+                'activeTab': 'groups',
+                'groups': [
+                    {'id': g.id, 'name': g.name, 'description': g.description, 'member_count': g.members.count()}
+                    for g in Group.objects.all()
+                ],
                 'errors': errors,
             })
         
@@ -477,6 +371,11 @@ def group_edit(request, id: int):
         
         if errors:
             return inertia_render(request, 'People', {
+                'activeTab': 'groups',
+                'groups': [
+                    {'id': g.id, 'name': g.name, 'description': g.description, 'member_count': g.members.count()}
+                    for g in Group.objects.all()
+                ],
                 'errors': errors,
             })
         
@@ -500,4 +399,182 @@ def group_delete(request, id: int):
     return redirect('group_list')
 
 
-# Create your views here.
+# ─────────────────────────────────────────────
+# Profile Views
+# ─────────────────────────────────────────────
+
+@login_required
+@inertia('Profile')
+def profile(request):
+    """User profile page."""
+    user = request.user
+    try:
+        user_profile = UserProfile.objects.select_related('organization', 'role').get(user=user)
+    except UserProfile.DoesNotExist:
+        user_profile = None
+    
+    profile_data = {
+        'id': user.id,
+        'username': user.username,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'full_name': user_profile.full_name if user_profile else f"{user.first_name} {user.last_name}".strip(),
+        'phone': user_profile.phone if user_profile else '',
+        'job_title': user_profile.job_title if user_profile else '',
+        'timezone': user_profile.timezone if user_profile else 'UTC',
+        'role': user_profile.role.name if user_profile and user_profile.role else 'User',
+        'organization': user_profile.organization.name if user_profile and user_profile.organization else None,
+        'date_joined': user.date_joined.strftime('%B %d, %Y') if user.date_joined else None,
+        'avatar_url': user_profile.avatar_url if user_profile and hasattr(user_profile, 'avatar_url') else None,
+    }
+    
+    return {
+        'profile': profile_data,
+    }
+
+
+@login_required
+def profile_update(request):
+    """Update user profile details."""
+    from django.http import JsonResponse
+    import json
+    
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    
+    user = request.user
+    
+    # Update user fields
+    if 'first_name' in data:
+        user.first_name = data['first_name']
+    if 'last_name' in data:
+        user.last_name = data['last_name']
+    if 'email' in data:
+        # Check if email is already taken
+        if User.objects.exclude(id=user.id).filter(email=data['email']).exists():
+            return JsonResponse({'error': 'Email is already in use'}, status=400)
+        user.email = data['email']
+    
+    user.save()
+    
+    # Update profile fields
+    try:
+        profile = UserProfile.objects.get(user=user)
+    except UserProfile.DoesNotExist:
+        profile = UserProfile.objects.create(user=user)
+    
+    if 'phone' in data:
+        profile.phone = data['phone']
+    if 'job_title' in data:
+        profile.job_title = data['job_title']
+    if 'timezone' in data:
+        profile.timezone = data['timezone']
+    
+    # Update full_name
+    profile.full_name = f"{user.first_name} {user.last_name}".strip()
+    profile.save()
+    
+    return JsonResponse({'success': True})
+
+
+@login_required
+def profile_change_password(request):
+    """Change user password."""
+    from django.http import JsonResponse
+    from django.contrib.auth import update_session_auth_hash
+    import json
+    
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+    
+    if not current_password or not new_password:
+        return JsonResponse({'error': 'Current and new password are required'}, status=400)
+    
+    if len(new_password) < 8:
+        return JsonResponse({'error': 'Password must be at least 8 characters'}, status=400)
+    
+    user = request.user
+    
+    # Check current password
+    if not user.check_password(current_password):
+        return JsonResponse({'error': 'Current password is incorrect'}, status=400)
+    
+    # Set new password
+    user.set_password(new_password)
+    user.save()
+    
+    # Update session to prevent logout
+    update_session_auth_hash(request, user)
+    
+    return JsonResponse({'success': True})
+
+
+@login_required
+def profile_update_avatar(request):
+    """Update the user's profile avatar from base64 image data."""
+    from django.http import JsonResponse
+    import json
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    avatar_data = data.get('avatar')
+    if not avatar_data:
+        return JsonResponse({'error': 'No avatar data provided'}, status=400)
+
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    try:
+        avatar_url = store_image_data(avatar_data, f'avatar_{request.user.id}', 'avatars')
+    except UploadError as exc:
+        return JsonResponse({'error': exc.message}, status=exc.status)
+
+    profile.avatar_url = avatar_url
+    profile.save()
+
+    return JsonResponse({
+        'success': True,
+        'message': 'Avatar updated successfully',
+        'avatar_url': avatar_url,
+    })
+
+
+@login_required
+def profile_remove_avatar(request):
+    """Remove user profile avatar."""
+    from django.http import JsonResponse
+    
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+    
+    user = request.user
+    
+    try:
+        profile = UserProfile.objects.get(user=user)
+        profile.avatar_url = ''
+        profile.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Avatar removed successfully',
+        })
+    except UserProfile.DoesNotExist:
+        return JsonResponse({'error': 'Profile not found'}, status=404)

@@ -1,369 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Head, Link, router, usePage } from '@inertiajs/react'
 import api from '../../utils/axios'
-import AppShell from '../components/AppShell'
+import TasksLayout from '../components/tasks/TasksLayout'
+import TaskCreatePopover from '../components/tasks/TaskCreatePopover'
+import { TASK_SORTS, DUE_FILTERS } from '../components/tasks/constants'
 import { Popover } from '../../components/Popover'
-import Drawer from '../components/Drawer'
-import Select from '../components/SearchableSelect'
-import RichEditor from '../components/RichEditor'
-import { THEME, COLORS } from '../constants/theme'
-import ConversationTab from '../components/ticket/ConversationTab'
-import AttachmentsTab from '../components/ticket/AttachmentsTab'
-import ActivityTimeline from '../../components/ActivityTimeline'
+import DatePicker from '../components/pickers/DatePicker'
+import { THEME } from '../constants/theme'
 import toast from 'react-hot-toast'
 import DataTable from '../../components/DataTable'
+import Modal, { ModalBody, ModalButton } from '../components/Modal'
+import { Pencil } from 'lucide-react'
+import SimpleSelect from '../components/SimpleSelect'
+import MobileTasks from '../components/tasks/MobileTasks'
+import useMediaQuery, { DESKTOP_QUERY } from '../../utils/useMediaQuery'
 
-// Options for task selects
-const STATUS_OPTIONS = [
-  { id: 'todo', name: 'To Do' },
-  { id: 'in_progress', name: 'In Progress' },
-  { id: 'review', name: 'In Review' },
-  { id: 'done', name: 'Done' },
-  { id: 'cancelled', name: 'Cancelled' },
-]
-
-const PRIORITY_OPTIONS = [
-  { id: 'low', name: 'Low' },
-  { id: 'normal', name: 'Normal' },
-  { id: 'high', name: 'High' },
-  { id: 'urgent', name: 'Urgent' },
-]
-
-// Task Drawer Skeleton
-const TaskDrawerSkeleton = () => (
-  <div className="animate-pulse p-4 sm:p-6 space-y-6">
-    {/* Title & Status skeleton */}
-    <div className="space-y-3">
-      <div className="h-7 w-3/4 bg-gray-200 rounded"></div>
-      <div className="flex items-center gap-3">
-        <div className="h-5 w-20 bg-gray-200 rounded-full"></div>
-        <div className="h-5 w-16 bg-gray-200 rounded-full"></div>
-      </div>
-    </div>
-    
-    {/* Meta info skeleton */}
-    <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
-      <div className="flex items-center gap-2">
-        <div className="w-8 h-8 bg-gray-200 rounded-full"></div>
-        <div className="h-4 w-24 bg-gray-200 rounded"></div>
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="w-8 h-8 bg-gray-200 rounded-full"></div>
-        <div className="h-4 w-20 bg-gray-200 rounded"></div>
-      </div>
-    </div>
-    
-    {/* Details grid skeleton */}
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      {[1, 2, 3, 4].map(i => (
-        <div key={i}>
-          <div className="h-3 w-16 bg-gray-200 rounded mb-2"></div>
-          <div className="h-8 w-full bg-gray-200 rounded"></div>
-        </div>
-      ))}
-    </div>
-    
-    {/* Tabs skeleton */}
-    <div className="flex gap-4 border-b border-gray-200 pb-2 overflow-x-auto">
-      {[1, 2, 3].map(i => (
-        <div key={i} className="h-8 w-20 sm:w-24 bg-gray-200 rounded flex-shrink-0"></div>
-      ))}
-    </div>
-    
-    {/* Comments skeleton */}
-    <div className="space-y-4">
-      {[1, 2].map(i => (
-        <div key={i} className="bg-gray-100 rounded-lg p-4">
-          <div className="flex gap-3">
-            <div className="w-10 h-10 bg-gray-200 rounded-full flex-shrink-0"></div>
-            <div className="flex-1 space-y-2">
-              <div className="h-4 w-32 bg-gray-200 rounded"></div>
-              <div className="h-16 w-full bg-gray-200 rounded"></div>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-)
-
-// Task Drawer Content
-const TaskDrawerContent = ({ 
-  task, 
-  comments, 
-  attachments, 
-  activities, 
-  users, 
-  groups,
-  onClose,
-  onUpdate 
-}) => {
-  const [activeTab, setActiveTab] = useState('conversation')
-  const [newComment, setNewComment] = useState('')
-  const [commentInternal, setCommentInternal] = useState(false)
-  const [commentMentions, setCommentMentions] = useState([])
-  const [processing, setProcessing] = useState(false)
-
-  const statusColors = {
-    draft: 'bg-yellow-100 text-yellow-700',
-    todo: 'bg-gray-100 text-gray-700',
-    in_progress: 'bg-blue-100 text-blue-700',
-    review: 'bg-purple-100 text-purple-700',
-    done: 'bg-green-100 text-green-700',
-    cancelled: 'bg-red-100 text-red-700',
-  }
-
-  const handleSubmitComment = async (commentData = null) => {
-    const payload = commentData || {
-      message: newComment,
-      is_internal: commentInternal,
-      mentions: commentMentions,
-      attachments: [],
-    }
-    
-    if (!payload.message?.trim() && (!payload.attachments || payload.attachments.length === 0)) {
-      toast.error('Please enter a comment or attach a file')
-      return
-    }
-
-    setProcessing(true)
-
-    try {
-      await api.post(`/tasks/${task.uuid}/comment/`, {
-        ...payload,
-        attachments: JSON.stringify(payload.attachments || [])
-      })
-      
-      toast.success('Comment added successfully')
-      setNewComment('')
-      setCommentInternal(false)
-      setCommentMentions([])
-      onUpdate()
-    } catch (error) {
-      toast.error('Failed to add comment')
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-  const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    try {
-      toast.loading('Uploading file...', { id: 'file-upload' })
-      
-      const uploadFormData = new FormData()
-      uploadFormData.append('file', file)
-
-      const uploadResponse = await api.post('/upload/', uploadFormData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-      const uploadData = uploadResponse.data
-
-      const attachFormData = new FormData()
-      attachFormData.append('file_url', uploadData.file_url)
-      attachFormData.append('file_name', uploadData.file_name)
-      attachFormData.append('file_size', uploadData.file_size)
-      attachFormData.append('file_type', uploadData.file_type)
-
-      await api.post(`/tasks/${task.uuid}/attachment/`, attachFormData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-
-      toast.success('File uploaded successfully', { id: 'file-upload' })
-      onUpdate()
-    } catch {
-      toast.error('Failed to upload file', { id: 'file-upload' })
-    }
-  }
-
-  const updateField = async (field, value) => {
-    try {
-      await api.post(`/tasks/${task.uuid}/update/`, { [field]: value })
-      
-      toast.success('Task updated')
-      onUpdate()
-    } catch {
-      toast.error('Failed to update task')
-    }
-  }
-
-  return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Task Info Section */}
-      <div className="px-6 py-4 border-b border-gray-200 flex-shrink-0 overflow-y-auto max-h-[40%]">
-        {/* Title & Actions */}
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <h2 className="text-lg font-bold text-gray-900 leading-tight">{task?.title}</h2>
-          <Link 
-            href={`/tasks/${task?.uuid}/`} 
-            className="flex-shrink-0 text-xs text-[#4a154b] hover:underline"
-          >
-            Open full page →
-          </Link>
-        </div>
-        
-        {/* Status & Priority badges */}
-        <div className="flex items-center gap-2 mb-4">
-          <span className={`px-2 py-1 text-xs font-medium rounded-full ${statusColors[task?.status] || 'bg-gray-100 text-gray-700'}`}>
-            {task?.status_display || 'To Do'}
-          </span>
-          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-            task?.priority === 'urgent' ? 'bg-red-100 text-red-700' :
-            task?.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-            task?.priority === 'normal' ? 'bg-blue-100 text-blue-700' :
-            'bg-gray-100 text-gray-600'
-          }`}>
-            {task?.priority_display} Priority
-          </span>
-        </div>
-        
-        {/* Quick Details Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-sm">
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">Status</label>
-            <Select
-              value={task?.status || 'todo'}
-              onChange={(val) => updateField('status', val)}
-              options={STATUS_OPTIONS}
-              valueKey="id"
-              displayKey="name"
-              allowClear={false}
-            />
-          </div>
-          
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">Priority</label>
-            <Select
-              value={task?.priority || 'normal'}
-              onChange={(val) => updateField('priority', val)}
-              options={PRIORITY_OPTIONS}
-              valueKey="id"
-              displayKey="name"
-              allowClear={false}
-            />
-          </div>
-          
-          <div>
-            <label className="text-xs text-gray-500">Due Date</label>
-            <input
-              type="date"
-              value={task?.due_date || ''}
-              onChange={(e) => updateField('due_date', e.target.value || null)}
-              className="mt-1 w-full text-sm border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#4a154b]"
-            />
-          </div>
-          
-          <div>
-            <label className="text-xs text-gray-500">Assignee</label>
-            <div className="mt-1 flex items-center gap-2 py-1.5">
-              {task?.assignee ? (
-                <>
-                  <div className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center">
-                    {task.assignee.name?.charAt(0)?.toUpperCase() || '?'}
-                  </div>
-                  <span className="text-gray-900 truncate">{task.assignee.name}</span>
-                </>
-              ) : (
-                <span className="text-gray-400">Unassigned</span>
-              )}
-            </div>
-          </div>
-        </div>
-        
-        {/* Description */}
-        {task?.description && (
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <div 
-              className="text-sm text-gray-600 prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: task.description }}
-            />
-          </div>
-        )}
-      </div>
-      
-      {/* Tabs */}
-      <div className="flex border-b border-gray-200 px-4 flex-shrink-0 bg-white">
-        <button
-          onClick={() => setActiveTab('conversation')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 ${
-            activeTab === 'conversation'
-              ? 'border-[#4a154b] text-[#4a154b]'
-              : 'border-transparent text-gray-600 hover:text-gray-900'
-          }`}
-        >
-          Conversation ({comments?.length || 0})
-        </button>
-        <button
-          onClick={() => setActiveTab('attachments')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 ${
-            activeTab === 'attachments'
-              ? 'border-[#4a154b] text-[#4a154b]'
-              : 'border-transparent text-gray-600 hover:text-gray-900'
-          }`}
-        >
-          Attachments ({attachments?.length || 0})
-        </button>
-        <button
-          onClick={() => setActiveTab('activity')}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 ${
-            activeTab === 'activity'
-              ? 'border-[#4a154b] text-[#4a154b]'
-              : 'border-transparent text-gray-600 hover:text-gray-900'
-          }`}
-        >
-          Activity ({activities?.length || 0})
-        </button>
-      </div>
-      
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
-        {activeTab === 'conversation' && (
-          <ConversationTab
-            task={task}
-            comments={comments || []}
-            newComment={newComment}
-            setNewComment={setNewComment}
-            commentInternal={commentInternal}
-            setCommentInternal={setCommentInternal}
-            commentMentions={commentMentions}
-            onMentionsChange={setCommentMentions}
-            processing={processing}
-            onSubmitComment={handleSubmitComment}
-            onFileUpload={handleFileUpload}
-          />
-        )}
-        
-        {activeTab === 'attachments' && (
-          <AttachmentsTab
-            attachments={attachments || []}
-            onAddAttachment={() => {
-              const fileInput = document.createElement('input')
-              fileInput.type = 'file'
-              fileInput.onchange = handleFileUpload
-              fileInput.click()
-            }}
-          />
-        )}
-        
-        {activeTab === 'activity' && (
-          <div className="h-full overflow-y-auto">
-            <ActivityTimeline activities={activities || []} />
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-export default function Tasks({ sidebar = {}, tasks = [], counters = {}, currentView = null, pagination = null, draftsCount = 0 }) {
+export default function Tasks({ sidebar = {}, workspace = {}, tasks = [], counters = {}, currentView = null, pagination = null, draftsCount = 0, projects = [], users = [], sort = 'created' }) {
   const { url } = usePage()
+  const isDesktop = useMediaQuery(DESKTOP_QUERY)
   
   // Parse URL params for initial filter values
   const getInitialFilters = () => {
     const params = new URLSearchParams(url.split('?')[1] || '')
     return {
+      search: params.get('search') || '',
+      project: params.get('project') || '',
+      due: params.get('due') || '',
       taskNumber: params.get('taskNumber') || '',
       status: params.get('status') || '',
       priority: params.get('priority') || '',
@@ -373,7 +35,6 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
     }
   }
   
-  const [viewsOpen, setViewsOpen] = useState(true)
   const [viewMode, setViewMode] = useState('board') // 'list', 'card', or 'board'
   const [selectedTasks, setSelectedTasks] = useState([])
   const [isMarkingDraft, setIsMarkingDraft] = useState(false)
@@ -383,22 +44,9 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState(getInitialFilters)
   
-  // Modal state
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isLoadingTask, setIsLoadingTask] = useState(false)
-  const [selectedTaskData, setSelectedTaskData] = useState(null)
-  const [taskComments, setTaskComments] = useState([])
-  const [taskAttachments, setTaskAttachments] = useState([])
-  const [taskActivities, setTaskActivities] = useState([])
-  const [taskUsers, setTaskUsers] = useState([])
-  const [taskGroups, setTaskGroups] = useState([])
 
   // Quick Add Task Popover state
-  const [showAddTaskPopover, setShowAddTaskPopover] = useState(null) // column id or null
   const [showColumnOptionsPopover, setShowColumnOptionsPopover] = useState(null) // column id or null
-  const [isLoadingAddForm, setIsLoadingAddForm] = useState(false)
-  const [addFormUsers, setAddFormUsers] = useState([])
-  const [addFormGroups, setAddFormGroups] = useState([])
   const [editingColumn, setEditingColumn] = useState(null) // column being edited
   const [columnForm, setColumnForm] = useState({ label: '', color: '', description: '' })
   const [isSavingColumn, setIsSavingColumn] = useState(false)
@@ -413,86 +61,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
   ])
   const [hiddenColumns, setHiddenColumns] = useState([])
   
-  const [newTaskForm, setNewTaskForm] = useState({
-    title: '',
-    description: '',
-    assignee: '',
-    priority: 'normal',
-    group: '',
-    due_date: '',
-  })
-  const [selectedTags, setSelectedTags] = useState([])
-  const [tagInput, setTagInput] = useState('')
-  const [selectedWatchers, setSelectedWatchers] = useState([])
-  const [isCreatingTask, setIsCreatingTask] = useState(false)
 
-  // Open task modal
-  const openTaskModal = useCallback(async (taskUuid) => {
-    setIsModalOpen(true)
-    setIsLoadingTask(true)
-    setSelectedTaskData(null)
-    
-    // Artificial delay for skeleton
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    
-    try {
-      const response = await api.get(`/api/tasks/${taskUuid}/`)
-      const data = response.data
-      
-      setSelectedTaskData(data.task)
-      setTaskComments(data.comments || [])
-      setTaskAttachments(data.attachments || [])
-      setTaskActivities(data.activities || [])
-      setTaskUsers(data.users || [])
-      setTaskGroups(data.groups || [])
-    } catch (error) {
-      console.error('Failed to load task:', error)
-      toast.error('Failed to load task details')
-      setIsModalOpen(false)
-    } finally {
-      setIsLoadingTask(false)
-    }
-  }, [])
-
-  // Refresh task data
-  const refreshTaskData = useCallback(async () => {
-    if (!selectedTaskData?.uuid) return
-    
-    try {
-      const response = await api.get(`/api/tasks/${selectedTaskData.uuid}/`)
-      const data = response.data
-      
-      setSelectedTaskData(data.task)
-      setTaskComments(data.comments || [])
-      setTaskAttachments(data.attachments || [])
-      setTaskActivities(data.activities || [])
-      
-      // Also reload the page to update the task list
-      router.reload({ preserveScroll: true })
-    } catch (error) {
-      console.error('Failed to refresh task:', error)
-    }
-  }, [selectedTaskData?.uuid])
-
-  // Close modal
-  const closeModal = useCallback(() => {
-    setIsModalOpen(false)
-    setSelectedTaskData(null)
-    setTaskComments([])
-    setTaskAttachments([])
-    setTaskActivities([])
-  }, [])
-
-  // Handle ESC key to close modal
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isModalOpen) {
-        closeModal()
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isModalOpen, closeModal])
 
   // Fetch board columns
   useEffect(() => {
@@ -512,92 +81,8 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
     fetchBoardColumns()
   }, [])
 
-  // Quick Add Task handlers
-  const loadAddFormData = async () => {
-    setIsLoadingAddForm(true)
-    setNewTaskForm({
-      title: '',
-      description: '',
-      assignee: '',
-      priority: 'normal',
-      group: '',
-      due_date: '',
-    })
-    setSelectedTags([])
-    setTagInput('')
-    setSelectedWatchers([])
-    
-    // Fetch users and groups for the form
-    try {
-      const response = await api.get('/api/tasks/form-data/')
-      setAddFormUsers(response.data.users || [])
-      setAddFormGroups(response.data.groups || [])
-    } catch (error) {
-      console.error('Failed to fetch form data:', error)
-    }
-    
-    // Show skeleton for 1 second minimum
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    setIsLoadingAddForm(false)
-  }
-
-  const addTag = () => {
-    if (tagInput.trim() && !selectedTags.includes(tagInput.trim())) {
-      setSelectedTags([...selectedTags, tagInput.trim()])
-      setTagInput('')
-    }
-  }
-
-  const removeTag = (tag) => {
-    setSelectedTags(selectedTags.filter(t => t !== tag))
-  }
-
-  const toggleWatcher = (userId) => {
-    if (selectedWatchers.includes(userId)) {
-      setSelectedWatchers(selectedWatchers.filter(id => id !== userId))
-    } else {
-      setSelectedWatchers([...selectedWatchers, userId])
-    }
-  }
-
-  const handleQuickAddTask = async (e, closePopover) => {
-    e.preventDefault()
-    
-    if (!newTaskForm.title.trim()) {
-      toast.error('Title is required')
-      return
-    }
-
-    if (!newTaskForm.description.trim()) {
-      toast.error('Description is required')
-      return
-    }
-
-    setIsCreatingTask(true)
-
-    try {
-      await api.post('/tasks/new/', {
-        title: newTaskForm.title,
-        description: newTaskForm.description,
-        assignee: newTaskForm.assignee || null,
-        priority: newTaskForm.priority,
-        group: newTaskForm.group || null,
-        due_date: newTaskForm.due_date || null,
-        tags: JSON.stringify(selectedTags),
-        watchers: JSON.stringify(selectedWatchers),
-        status: showAddTaskPopover, // Set the status based on the column
-      })
-
-      toast.success('Task created successfully')
-      if (closePopover) closePopover()
-      router.reload({ preserveScroll: true })
-    } catch (error) {
-      console.error('Failed to create task:', error)
-      toast.error('Failed to create task')
-    } finally {
-      setIsCreatingTask(false)
-    }
-  }
+  // New tasks default to the project the list is filtered by
+  const quickCreateProject = (filters.project && filters.project !== 'none') ? filters.project : ''
 
   const views = sidebar.views || [
     { id: 'all', label: 'All Tasks', count: counters.all || 0 },
@@ -617,15 +102,19 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
   const activeViewId = currentView || (defaultView ? defaultView.id : 'all')
 
   // Build URL params for filters
-  const buildUrlParams = () => {
+  const buildUrlParams = (f = filters, s = sort) => {
     const params = new URLSearchParams()
     params.set('view', activeViewId)
-    if (filters.taskNumber) params.set('taskNumber', filters.taskNumber)
-    if (filters.status) params.set('status', filters.status)
-    if (filters.priority) params.set('priority', filters.priority)
-    if (filters.assignee) params.set('assignee', filters.assignee)
-    if (filters.dateFrom) params.set('dateFrom', filters.dateFrom)
-    if (filters.dateTo) params.set('dateTo', filters.dateTo)
+    if (f.search) params.set('search', f.search)
+    if (f.project) params.set('project', f.project)
+    if (f.due) params.set('due', f.due)
+    if (s && s !== 'created') params.set('sort', s)
+    if (f.taskNumber) params.set('taskNumber', f.taskNumber)
+    if (f.status) params.set('status', f.status)
+    if (f.priority) params.set('priority', f.priority)
+    if (f.assignee) params.set('assignee', f.assignee)
+    if (f.dateFrom) params.set('dateFrom', f.dateFrom)
+    if (f.dateTo) params.set('dateTo', f.dateTo)
     return params.toString()
   }
 
@@ -633,8 +122,30 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
     router.get(`/tasks/?${buildUrlParams()}`)
   }
 
+  // Mobile applies an explicit filter set (and sort) instead of the panel state
+  const applyFiltersWith = (nextFilters, nextSort = sort) => {
+    router.get(`/tasks/?${buildUrlParams(nextFilters, nextSort)}`)
+  }
+
+  const changeSort = (nextSort) => {
+    const params = new URLSearchParams(buildUrlParams())
+    if (nextSort && nextSort !== 'created') params.set('sort', nextSort)
+    else params.delete('sort')
+    router.get(`/tasks/?${params.toString()}`, {}, { preserveState: true, preserveScroll: true })
+  }
+
+  const goToPage = (pageNum, perPage) => {
+    const params = new URLSearchParams(buildUrlParams())
+    params.set('page', pageNum)
+    if (perPage) params.set('per_page', perPage)
+    router.get(`/tasks/?${params.toString()}`, {}, { preserveState: true, preserveScroll: true })
+  }
+
   const clearFilters = () => {
     setFilters({
+      search: '',
+      project: '',
+      due: '',
       taskNumber: '',
       status: '',
       priority: '',
@@ -643,7 +154,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
       dateTo: '',
     })
     // Reload the page without filters
-    router.get(`/tasks/?view=${activeViewId}`)
+    router.get(`/tasks/?view=${activeViewId}${sort && sort !== 'created' ? `&sort=${sort}` : ''}`)
   }
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '')
@@ -907,6 +418,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
       router.reload({ preserveScroll: true })
     } catch (error) {
       console.error('Failed to update task status:', error)
+      toast.error(error?.response?.data?.error || 'Failed to update task status')
     }
     
     setDraggedTask(null)
@@ -914,160 +426,36 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
 
   // Get the current view label
   const activeView = views.find(v => v.id === activeViewId)
-  const pageTitle = activeView ? activeView.label : 'All Tasks'
+  const BUILT_IN_TITLES = { all: 'All Tasks', my_tasks: 'My Tasks', created_by_me: 'Created by me', watching: 'Watching', due_soon: 'Due soon', overdue: 'Overdue', drafts: 'Drafts' }
+  const pageTitle = activeView ? activeView.label : (BUILT_IN_TITLES[activeViewId] || 'All Tasks')
 
   return (
     <>
       <Head title={pageTitle} />
-      <AppShell active="tasks">
-        {/* Content row: Views sidebar + main list */}
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-        {/* Views Sidebar - hidden on mobile, shown as overlay */}
-        <div className="relative">
-        {viewsOpen && (
-        <>
-          {/* Mobile overlay backdrop */}
-          <div 
-            className="fixed inset-0 bg-black/30 z-40 lg:hidden" 
-            onClick={() => setViewsOpen(false)}
+      <TasksLayout workspace={workspace} currentView={activeViewId}>
+        {({ openNav }) => !isDesktop ? (
+          <MobileTasks
+            views={views}
+            draftsCount={draftsCount}
+            currentView={activeViewId}
+            onSelectView={loadView}
+            onOpenNav={openNav}
+            pageTitle={pageTitle}
+            tasks={tasks}
+            pagination={pagination}
+            filters={filters}
+            setFilters={setFilters}
+            appliedFilters={getInitialFilters()}
+            applyFilters={applyFiltersWith}
+            clearFilters={clearFilters}
+            sort={sort}
+            projects={projects}
+            users={users}
+            createStatus={boardColumns[0]?.id || 'todo'}
+            createProject={quickCreateProject}
           />
-          <aside className="fixed lg:sticky lg:top-12 inset-y-0 left-0 w-64 sm:w-72 bg-white border-r border-gray-200 flex flex-col z-50 lg:z-auto h-[calc(100vh-3rem)] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-            <div className="px-4 py-3 border-b border-gray-200">
-              <h2 className="text-gray-800 font-semibold">Views</h2>
-            </div>
-
-          <nav className="p-2 flex-1 overflow-y-auto">
-            {views.map((v) => (
-              <button
-                key={v.id}
-                onClick={() => loadView(v.id)}
-                className={`w-full text-left flex items-center justify-between px-3 py-2 rounded-md text-sm ${
-                  activeViewId === v.id
-                    ? 'bg-[#4a154b]/10 text-[#4a154b] font-medium'
-                    : 'hover:bg-gray-50 text-gray-700'
-                }`}>
-                <span className="truncate">{v.label}</span>
-                <span className={`ml-3 inline-flex items-center justify-center rounded-full text-xs px-2 py-0.5 ${
-                  activeViewId === v.id
-                    ? 'bg-[#4a154b]/20 text-[#4a154b]'
-                    : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {v.count}
-                </span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="mt-auto border-t border-gray-200 p-2 space-y-1">
-            {/* Drafts link */}
-            <button
-              onClick={() => loadView('drafts')}
-              className={`w-full text-left flex items-center justify-between px-3 py-2 rounded-md text-sm ${
-                activeViewId === 'drafts'
-                  ? 'bg-[#4a154b]/10 text-[#4a154b] font-medium'
-                  : 'hover:bg-gray-50 text-gray-700'
-              }`}
-              style={activeViewId === 'drafts' ? { borderLeft: `3px solid ${COLORS.primary}` } : {}}
-            >
-              <span className="flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                </svg>
-                Drafts
-              </span>
-              <span className={`ml-3 inline-flex items-center justify-center rounded-full text-xs px-2 py-0.5 ${
-                activeViewId === 'drafts'
-                  ? 'bg-[#4a154b]/20 text-[#4a154b]'
-                  : 'bg-gray-100 text-gray-600'
-              }`}>
-                {draftsCount}
-              </span>
-            </button>
-            
-            <Popover
-              width={200}
-              maxHeight={300}
-              showArrow={true}
-              trigger={({ toggle }) => (
-                <button 
-                  onClick={toggle}
-                  className={`w-full px-3 py-2 text-sm ${THEME.link} text-left rounded-md hover:bg-[#4a154b]/5 transition-colors`}
-                >
-                  Manage Views
-                </button>
-              )}
-            >
-              {({ close }) => (
-                <div className="py-1">
-                  <button
-                    onClick={() => {
-                      setViewMode('board')
-                      close()
-                    }}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 ${
-                      viewMode === 'board' ? 'text-[#4a154b] bg-[#4a154b]/10' : 'text-gray-700'
-                    }`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" />
-                    </svg>
-                    Board View
-                  </button>
-                  <button
-                    onClick={() => {
-                      setViewMode('list')
-                      close()
-                    }}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 ${
-                      viewMode === 'list' ? 'text-[#4a154b] bg-[#4a154b]/10' : 'text-gray-700'
-                    }`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" />
-                    </svg>
-                    List View
-                  </button>
-                  <button
-                    onClick={() => {
-                      setViewMode('card')
-                      close()
-                    }}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 ${
-                      viewMode === 'card' ? 'text-[#4a154b] bg-[#4a154b]/10' : 'text-gray-700'
-                    }`}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-                    </svg>
-                    Card View
-                  </button>
-                </div>
-              )}
-            </Popover>
-          </div>
-        </aside>
-        </>
-        )}
-        {/* Floating toggle button on sidebar border */}
-        <button
-          onClick={() => setViewsOpen(v => !v)}
-          className="absolute top-3 z-10 w-6 h-6 bg-white border border-gray-300 rounded-full shadow-sm hover:bg-gray-50 hidden lg:flex items-center justify-center text-gray-500 hover:text-gray-700"
-          style={{ left: viewsOpen ? '276px' : '0px' }}
-          title={viewsOpen ? 'Hide Views' : 'Show Views'}
-        >
-          {viewsOpen ? (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-3.5 h-3.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-3.5 h-3.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-            </svg>
-          )}
-        </button>
-        </div>
-
-        {/* Main */}
+        ) : (
+        <>
         <main className="flex-1 min-w-0">
           <div className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4">
             {/* Mobile header - stacked */}
@@ -1076,15 +464,11 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 {/* Mobile toggle button */}
                 <button
                   className="p-2 rounded-md hover:bg-gray-100 lg:hidden"
-                  title={viewsOpen ? 'Hide Views' : 'Show Views'}
-                  onClick={() => setViewsOpen(v => !v)}
-                  aria-expanded={viewsOpen}
+                  title="Open tasks navigation"
+                  aria-label="Open tasks navigation"
+                  onClick={openNav}
                 >
-                  {viewsOpen ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500"><path d="M10.5 6 3 12l7.5 6v-4.5H21v-3H10.5V6z"/></svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500"><path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/></svg>
-                  )}
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.75" stroke="currentColor" className="w-5 h-5 text-gray-500"><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
                 </button>
                 <h1 className="text-lg sm:text-xl font-semibold text-gray-800 truncate">{pageTitle}</h1>
               </div>
@@ -1093,7 +477,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 <div className="flex items-center bg-gray-100 rounded-md p-0.5 flex-shrink-0">
                 <button
                   onClick={() => setViewMode('board')}
-                  className={`p-1.5 rounded ${viewMode === 'board' ? 'bg-white shadow-sm text-[#4a154b]' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`p-1.5 rounded ${viewMode === 'board' ? 'bg-white shadow-sm text-[#0B3D26]' : 'text-gray-500 hover:text-gray-700'}`}
                   title="Board View"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
@@ -1102,7 +486,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 </button>
                 <button
                   onClick={() => setViewMode('list')}
-                  className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-[#4a154b]' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white shadow-sm text-[#0B3D26]' : 'text-gray-500 hover:text-gray-700'}`}
                   title="List View"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
@@ -1111,7 +495,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 </button>
                 <button
                   onClick={() => setViewMode('card')}
-                  className={`p-1.5 rounded ${viewMode === 'card' ? 'bg-white shadow-sm text-[#4a154b]' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`p-1.5 rounded ${viewMode === 'card' ? 'bg-white shadow-sm text-[#0B3D26]' : 'text-gray-500 hover:text-gray-700'}`}
                   title="Card View"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4">
@@ -1119,11 +503,12 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                   </svg>
                 </button>
               </div>
+              <SimpleSelect compact className="w-36 flex-shrink-0" value={sort} onChange={changeSort} options={TASK_SORTS} ariaLabel="Sort tasks" />
               <button 
                 onClick={() => setShowFilters(!showFilters)}
                 className={`px-2 sm:px-3 py-1.5 border rounded-md text-sm flex items-center gap-1 flex-shrink-0 ${
                   showFilters || hasActiveFilters
-                    ? 'border-[#4a154b] text-[#4a154b] bg-[#4a154b]/5'
+                    ? 'border-[#0B3D26] text-[#0B3D26] bg-[#0B3D26]/5'
                     : 'border-gray-300 text-gray-700 hover:bg-gray-50'
                 }`}
               >
@@ -1132,7 +517,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 </svg>
                 Filter
                 {hasActiveFilters && (
-                  <span className="ml-1 bg-[#4a154b] text-white text-xs rounded-full px-1.5">
+                  <span className="ml-1 bg-[#0B3D26] text-white text-xs rounded-full px-1.5">
                     {Object.values(filters).filter(v => v !== '').length}
                   </span>
                 )}
@@ -1149,6 +534,34 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
           {showFilters && (
             <div className="bg-gray-50 border-b border-gray-200 px-3 sm:px-6 py-4 flex-shrink-0">
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex lg:flex-wrap gap-3 lg:gap-4 items-end">
+                {/* Search */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-600">Search</label>
+                  <input
+                    type="search"
+                    value={filters.search}
+                    onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                    onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                    placeholder="Title or #id"
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[140px] focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26]"
+                  />
+                </div>
+
+                {/* Project Filter */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-600">Project</label>
+                  <SimpleSelect
+                    compact className="w-full lg:min-w-[140px]" value={filters.project} onChange={(value) => setFilters({ ...filters, project: value })}
+                    emptyLabel="All Projects" options={[{ id: 'none', name: 'No project' }, ...projects.map(p => ({ id: p.uuid, name: p.name }))]}
+                  />
+                </div>
+
+                {/* Due Filter */}
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-gray-600">Due</label>
+                  <SimpleSelect compact className="w-full lg:min-w-[140px]" value={filters.due} onChange={(value) => setFilters({ ...filters, due: value })} emptyLabel="Any due date" options={DUE_FILTERS} />
+                </div>
+
                 {/* Task Number Search */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">Task ID</label>
@@ -1157,76 +570,63 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                     value={filters.taskNumber}
                     onChange={(e) => setFilters({ ...filters, taskNumber: e.target.value })}
                     placeholder="e.g. 123"
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[100px] focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[100px] focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26]"
                   />
                 </div>
 
                 {/* Status Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">Status</label>
-                  <select
-                    value={filters.status}
-                    onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[140px] focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                  >
-                    <option value="">All Statuses</option>
-                    <option value="todo">To Do</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="review">In Review</option>
-                    <option value="done">Done</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
+                  <SimpleSelect
+                    compact className="w-full lg:min-w-[140px]" value={filters.status} onChange={(value) => setFilters({ ...filters, status: value })}
+                    emptyLabel="All Statuses"
+                    options={[
+                      { id: 'todo', name: 'To Do' }, { id: 'in_progress', name: 'In Progress' }, { id: 'review', name: 'In Review' },
+                      { id: 'done', name: 'Done' }, { id: 'cancelled', name: 'Cancelled' },
+                    ]}
+                  />
                 </div>
 
                 {/* Priority Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">Priority</label>
-                  <select
-                    value={filters.priority}
-                    onChange={(e) => setFilters({ ...filters, priority: e.target.value })}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[140px] focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                  >
-                    <option value="">All Priorities</option>
-                    <option value="urgent">Urgent</option>
-                    <option value="high">High</option>
-                    <option value="normal">Normal</option>
-                    <option value="low">Low</option>
-                  </select>
+                  <SimpleSelect
+                    compact className="w-full lg:min-w-[140px]" value={filters.priority} onChange={(value) => setFilters({ ...filters, priority: value })}
+                    emptyLabel="All Priorities"
+                    options={[{ id: 'urgent', name: 'Urgent' }, { id: 'high', name: 'High' }, { id: 'normal', name: 'Normal' }, { id: 'low', name: 'Low' }]}
+                  />
                 </div>
 
                 {/* Assignee Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">Assignee</label>
-                  <select
-                    value={filters.assignee}
-                    onChange={(e) => setFilters({ ...filters, assignee: e.target.value })}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full lg:min-w-[140px] focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                  >
-                    <option value="">All Assignees</option>
-                    <option value="unassigned">Unassigned</option>
-                    <option value="me">Assigned to Me</option>
-                  </select>
+                  <SimpleSelect
+                    compact className="w-full lg:min-w-[140px]" value={filters.assignee} onChange={(value) => setFilters({ ...filters, assignee: value })}
+                    emptyLabel="All Assignees" options={[{ id: 'unassigned', name: 'Unassigned' }, { id: 'me', name: 'Assigned to Me' }, ...users]}
+                  />
                 </div>
 
                 {/* Date From Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">From Date</label>
-                  <input
-                    type="date"
+                  <DatePicker
                     value={filters.dateFrom}
-                    onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
+                    max={filters.dateTo || undefined}
+                    onChange={(v) => setFilters({ ...filters, dateFrom: v })}
+                    aria-label="From date"
+                    allowClear
                   />
                 </div>
 
                 {/* Date To Filter */}
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-gray-600">To Date</label>
-                  <input
-                    type="date"
+                  <DatePicker
                     value={filters.dateTo}
-                    onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm text-gray-700 bg-white w-full focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
+                    min={filters.dateFrom || undefined}
+                    onChange={(v) => setFilters({ ...filters, dateTo: v })}
+                    aria-label="To date"
+                    allowClear
                   />
                 </div>
 
@@ -1258,7 +658,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               {/* Bulk actions toolbar */}
               {selectedTasks.length > 0 && (
-                <div className="px-4 py-3 bg-[#4a154b]/5 border-b border-gray-200 flex items-center justify-between">
+                <div className="px-4 py-3 bg-[#0B3D26]/5 border-b border-gray-200 flex items-center justify-between">
                   <span className="text-sm text-gray-700">
                     {selectedTasks.length} task{selectedTasks.length > 1 ? 's' : ''} selected
                   </span>
@@ -1352,7 +752,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                 <span className="text-gray-700">{column.label}</span>
                                 <button
                                   onClick={() => handleRestoreColumn(column)}
-                                  className="text-gray-400 hover:text-[#4a154b] transition-colors"
+                                  className="text-gray-400 hover:text-[#0B3D26] transition-colors"
                                   title="Restore column"
                                 >
                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
@@ -1408,8 +808,8 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                     onClick={toggle}
                                     className={`p-1 rounded transition-all ${
                                       showColumnOptionsPopover === column.id
-                                        ? 'text-[#4a154b] bg-white'
-                                        : 'text-gray-400 hover:text-[#4a154b] hover:bg-white'
+                                        ? 'text-[#0B3D26] bg-white'
+                                        : 'text-gray-400 hover:text-[#0B3D26] hover:bg-white'
                                     }`}
                                     title="Column Options"
                                   >
@@ -1464,7 +864,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                               close()
                                             }
                                           }}
-                                          className="w-14 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#4a154b] focus:border-[#4a154b]"
+                                          className="w-14 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#0B3D26] focus:border-[#0B3D26]"
                                         />
                                       </div>
                                     </div>
@@ -1537,25 +937,16 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                               </Popover>
                               
                               {/* Add Task Button */}
-                              <Popover
-                                width={500}
-                                maxHeight={600}
-                                showArrow={true}
-                                onOpenChange={(isOpen) => {
-                                  if (isOpen) {
-                                    setShowAddTaskPopover(column.id)
-                                    loadAddFormData()
-                                  } else {
-                                    setShowAddTaskPopover(null)
-                                  }
-                                }}
-                                trigger={({ toggle }) => (
+                              <TaskCreatePopover
+                                status={column.id}
+                                defaultProject={quickCreateProject}
+                                trigger={({ toggle, open }) => (
                                   <button
                                     onClick={toggle}
                                     className={`p-1 rounded transition-all ${
-                                      showAddTaskPopover === column.id
-                                        ? 'text-[#4a154b] bg-white'
-                                        : 'text-gray-400 hover:text-[#4a154b] hover:bg-white'
+                                      open
+                                        ? 'text-[#0B3D26] bg-white'
+                                        : 'text-gray-400 hover:text-[#0B3D26] hover:bg-white'
                                     }`}
                                     title="Add New Task"
                                   >
@@ -1564,269 +955,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                     </svg>
                                   </button>
                                 )}
-                              >
-                              {({ close }) => (
-                                <div className="max-h-[60vh] overflow-hidden flex flex-col">
-                                  {/* Popover Header */}
-                                  <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
-                                    <h4 className="font-semibold text-gray-900 text-sm">Create New Task</h4>
-                                    <button
-                                      onClick={close}
-                                      className="text-gray-400 hover:text-gray-600"
-                                    >
-                                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                  
-                                  {/* Popover Content */}
-                                  <div className="p-4 overflow-y-auto flex-1">
-                                    {isLoadingAddForm ? (
-                                      // Skeleton loader
-                                      <div className="animate-pulse space-y-4">
-                                        <div>
-                                          <div className="h-3 w-12 bg-gray-200 rounded mb-2"></div>
-                                          <div className="h-9 w-full bg-gray-200 rounded"></div>
-                                        </div>
-                                        <div>
-                                          <div className="h-3 w-20 bg-gray-200 rounded mb-2"></div>
-                                          <div className="h-24 w-full bg-gray-200 rounded"></div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                          <div>
-                                            <div className="h-3 w-14 bg-gray-200 rounded mb-2"></div>
-                                            <div className="h-9 w-full bg-gray-200 rounded"></div>
-                                          </div>
-                                          <div>
-                                            <div className="h-3 w-14 bg-gray-200 rounded mb-2"></div>
-                                            <div className="h-9 w-full bg-gray-200 rounded"></div>
-                                          </div>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                          <div>
-                                            <div className="h-3 w-16 bg-gray-200 rounded mb-2"></div>
-                                            <div className="h-9 w-full bg-gray-200 rounded"></div>
-                                          </div>
-                                          <div>
-                                            <div className="h-3 w-16 bg-gray-200 rounded mb-2"></div>
-                                            <div className="h-9 w-full bg-gray-200 rounded"></div>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      // Form
-                                      <form onSubmit={(e) => handleQuickAddTask(e, close)} className="space-y-4">
-                                        {/* Title */}
-                                        <div>
-                                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Title <span className="text-red-500">*</span>
-                                          </label>
-                                          <input
-                                            type="text"
-                                            value={newTaskForm.title}
-                                            onChange={(e) => setNewTaskForm({ ...newTaskForm, title: e.target.value })}
-                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                                            placeholder="Brief summary of the task"
-                                            autoFocus
-                                          />
-                                        </div>
-                                        
-                                        {/* Description */}
-                                        <div>
-                                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Description <span className="text-red-500">*</span>
-                                          </label>
-                                          <RichEditor
-                                            value={newTaskForm.description}
-                                            onChange={(html) => setNewTaskForm({ ...newTaskForm, description: html })}
-                                            placeholder="Detailed description of the task..."
-                                          />
-                                        </div>
-                                        
-                                        {/* Assignment Section */}
-                                        <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
-                                          <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Assignment</h5>
-                                          <div className="grid grid-cols-2 gap-3">
-                                            <div>
-                                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Assignee
-                                              </label>
-                                              <Select
-                                                value={newTaskForm.assignee}
-                                                onChange={(val) => setNewTaskForm({ ...newTaskForm, assignee: val })}
-                                                options={addFormUsers}
-                                                valueKey="id"
-                                                displayKey="name"
-                                                placeholder="Select assignee"
-                                                allowClear={true}
-                                              />
-                                            </div>
-                                            <div>
-                                              <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Group
-                                              </label>
-                                              <Select
-                                                value={newTaskForm.group}
-                                                onChange={(val) => setNewTaskForm({ ...newTaskForm, group: val })}
-                                                options={addFormGroups}
-                                                valueKey="id"
-                                                displayKey="name"
-                                                placeholder="Select group"
-                                                allowClear={true}
-                                              />
-                                            </div>
-                                          </div>
-                                        </div>
-                                        
-                                        {/* Priority & Due Date */}
-                                        <div className="grid grid-cols-2 gap-3">
-                                          <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                              Priority <span className="text-red-500">*</span>
-                                            </label>
-                                            <Select
-                                              value={newTaskForm.priority}
-                                              onChange={(val) => setNewTaskForm({ ...newTaskForm, priority: val })}
-                                              options={PRIORITY_OPTIONS}
-                                              valueKey="id"
-                                              displayKey="name"
-                                              allowClear={false}
-                                            />
-                                          </div>
-                                          
-                                          <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                              Due Date
-                                            </label>
-                                            <input
-                                              type="date"
-                                              value={newTaskForm.due_date}
-                                              onChange={(e) => setNewTaskForm({ ...newTaskForm, due_date: e.target.value })}
-                                              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                                            />
-                                          </div>
-                                        </div>
-                                        
-                                        {/* Tags */}
-                                        <div>
-                                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Tags
-                                          </label>
-                                          <div className="flex gap-2 mb-2">
-                                            <input
-                                              type="text"
-                                              value={tagInput}
-                                              onChange={(e) => setTagInput(e.target.value)}
-                                              onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                                              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                                              placeholder="Add tags (press Enter)"
-                                            />
-                                            <button
-                                              type="button"
-                                              onClick={addTag}
-                                              className="px-3 py-2 bg-[#4a154b] text-white text-sm rounded-md hover:bg-[#3a1040] transition-colors"
-                                            >
-                                              Add
-                                            </button>
-                                          </div>
-                                          
-                                          {selectedTags.length > 0 && (
-                                            <div className="flex flex-wrap gap-2">
-                                              {selectedTags.map(tag => (
-                                                <span
-                                                  key={tag}
-                                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs"
-                                                >
-                                                  {tag}
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => removeTag(tag)}
-                                                    className="hover:text-blue-900"
-                                                  >
-                                                    ×
-                                                  </button>
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                        
-                                        {/* Watchers */}
-                                        {addFormUsers.length > 0 && (
-                                          <div className="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
-                                            <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Watchers</h5>
-                                            <Select
-                                              value=""
-                                              onChange={(userId) => {
-                                                if (userId && !selectedWatchers.includes(userId)) {
-                                                  setSelectedWatchers([...selectedWatchers, userId])
-                                                }
-                                              }}
-                                              options={addFormUsers.filter(u => !selectedWatchers.includes(u.id))}
-                                              valueKey="id"
-                                              displayKey="name"
-                                              placeholder="Select watchers..."
-                                              allowClear={false}
-                                            />
-                                            {selectedWatchers.length > 0 && (
-                                              <div className="flex flex-wrap gap-2 mt-2">
-                                                {selectedWatchers.map(watcherId => {
-                                                  const user = addFormUsers.find(u => u.id === watcherId)
-                                                  return user ? (
-                                                    <span
-                                                      key={watcherId}
-                                                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-800 rounded-full text-xs"
-                                                    >
-                                                      {user.name}
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setSelectedWatchers(selectedWatchers.filter(id => id !== watcherId))}
-                                                        className="hover:text-purple-900"
-                                                      >
-                                                        ×
-                                                      </button>
-                                                    </span>
-                                                  ) : null
-                                                })}
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-                                        
-                                        {/* Actions */}
-                                        <div className="flex justify-end gap-2 pt-3 border-t border-gray-200">
-                                          <button
-                                            type="button"
-                                            onClick={close}
-                                            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-md hover:bg-gray-50"
-                                          >
-                                            Cancel
-                                          </button>
-                                          <button
-                                            type="submit"
-                                            disabled={isCreatingTask}
-                                            className={`px-4 py-2 text-sm font-medium rounded-md ${THEME.button.primary} disabled:opacity-50 flex items-center gap-2`}
-                                          >
-                                            {isCreatingTask ? (
-                                              <>
-                                                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                </svg>
-                                                Creating...
-                                              </>
-                                            ) : (
-                                              'Create Task'
-                                            )}
-                                          </button>
-                                        </div>
-                                      </form>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </Popover>
+                              />
                           </div>
                         </div>
                       </div>
@@ -1848,23 +977,25 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                   draggedTask?.id === task.id ? 'opacity-50' : ''
                                 }`}
                               >
-                                {/* Priority indicator */}
-                                <div className={`h-1 w-full rounded-full mb-2 ${
-                                  task.priority === 'urgent' ? 'bg-red-500' :
-                                  task.priority === 'high' ? 'bg-orange-500' :
-                                  task.priority === 'normal' ? 'bg-blue-500' :
-                                  'bg-gray-300'
-                                }`}></div>
+                                {/* Column colour indicator */}
+                                <div className={`h-1 w-full rounded-full mb-2 ${column.color || 'bg-gray-300'}`}></div>
                                 
-                                <button 
-                                  onClick={() => openTaskModal(task.uuid)} 
+                                <Link
+                                  href={`/tasks/${task.uuid}/`}
+                                  draggable={false}
                                   className="block text-left w-full"
                                 >
                                   <div className="text-xs text-gray-500 mb-1">#{task.id}</div>
-                                  <h4 className="text-sm font-medium text-gray-900 mb-2 line-clamp-2 hover:text-[#4a154b]">
+                                  <h4 className="text-sm font-medium text-gray-900 mb-2 line-clamp-2 hover:text-[#0B3D26]">
                                     {task.title}
                                   </h4>
-                                </button>
+                                </Link>
+                                {task.project && (
+                                  <Link href={`/tasks/projects/${task.project.uuid}/`} className="mb-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 max-w-full">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#0B3D26]/60 flex-shrink-0" />
+                                    <span className="truncate">{task.project.name}</span>
+                                  </Link>
+                                )}
                                 
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
@@ -1891,7 +1022,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                   {/* Assignee avatar */}
                                   {task.assignee ? (
                                     <div className="flex items-center gap-1" title={task.assignee.name}>
-                                      <div className="w-6 h-6 rounded-full bg-[#4a154b] text-white text-xs flex items-center justify-center">
+                                      <div className="w-6 h-6 rounded-full bg-[#0B3D26] text-white text-xs flex items-center justify-center">
                                         {task.assignee.name?.charAt(0)?.toUpperCase() || '?'}
                                       </div>
                                     </div>
@@ -1931,7 +1062,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                 <DataTable
                   data={tasks}
                   serverPagination={pagination ? { page: pagination.current_page, pages: pagination.total_pages, count: pagination.total_count } : undefined}
-                  onPageChange={(page, pageSize) => router.get(`/tasks?view=${activeViewId}`, { page, per_page: pageSize })}
+                  onPageChange={(page, pageSize) => goToPage(page, pageSize)}
                   columns={[
                     {
                       key: 'select',
@@ -1958,9 +1089,9 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                       key: 'title',
                       header: 'Task',
                       render: (task) => (
-                        <button onClick={() => openTaskModal(task.uuid)} className={`${THEME.link} text-left`}>
+                        <Link href={`/tasks/${task.uuid}/`} className={`${THEME.link} text-left`}>
                           <div className="font-medium">#{task.id} {task.title}</div>
-                        </button>
+                        </Link>
                       ),
                     },
                     {
@@ -1980,6 +1111,16 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                           {task.priority_display}
                         </span>
                       ),
+                    },
+                    {
+                      key: 'project',
+                      header: 'Project',
+                      sortable: false,
+                      render: (task) => task.project ? (
+                        <Link href={`/tasks/projects/${task.project.uuid}/`} className="text-gray-700 hover:text-[#0B3D26] truncate">
+                          {task.project.name}
+                        </Link>
+                      ) : <span className="text-gray-400">—</span>,
                     },
                     {
                       key: 'assignee',
@@ -2037,7 +1178,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                       </div>
                       <h3 className="text-lg font-medium text-gray-900 mb-1">No tasks yet</h3>
                       <p className="text-gray-500 mb-4">Get started by creating your first task</p>
-                      <Link href="/tasks/new/" className="inline-flex items-center gap-2 px-4 py-2 bg-[#4a154b] text-white rounded-lg hover:bg-[#3a1040] transition-colors">
+                      <Link href="/tasks/new/" className="inline-flex items-center gap-2 px-4 py-2 bg-[#0B3D26] text-white rounded-lg hover:bg-[#082C1B] transition-colors">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                         </svg>
@@ -2050,7 +1191,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                         <div
                           key={task.id}
                           className={`group relative bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden ${
-                            selectedTasks.includes(task.id) ? 'ring-2 ring-[#4a154b] ring-offset-2' : 'border border-gray-100 hover:border-gray-200'
+                            selectedTasks.includes(task.id) ? 'ring-2 ring-[#0B3D26] ring-offset-2' : 'border border-gray-100 hover:border-gray-200'
                           }`}
                         >
                           {/* Priority indicator bar */}
@@ -2074,19 +1215,25 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                 type="checkbox" 
                                 checked={selectedTasks.includes(task.id)}
                                 onChange={() => toggleTaskSelection(task.id)}
-                                className="w-4 h-4 rounded border-gray-300 text-[#4a154b] focus:ring-[#4a154b]/20 opacity-0 group-hover:opacity-100 transition-opacity checked:opacity-100"
+                                className="w-4 h-4 rounded border-gray-300 text-[#0B3D26] focus:ring-[#0B3D26]/20 opacity-0 group-hover:opacity-100 transition-opacity checked:opacity-100"
                               />
                             </div>
                             
                             {/* Title */}
-                            <button 
-                              onClick={() => openTaskModal(task.uuid)} 
+                            <Link
+                              href={`/tasks/${task.uuid}/`}
                               className="block text-left w-full group/title"
                             >
-                              <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 group-hover/title:text-[#4a154b] transition-colors leading-snug">
+                              <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 group-hover/title:text-[#0B3D26] transition-colors leading-snug">
                                 {task.title}
                               </h3>
-                            </button>
+                            </Link>
+                            {task.project && (
+                              <Link href={`/tasks/projects/${task.project.uuid}/`} className="mt-1 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 max-w-full">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#0B3D26]/60 flex-shrink-0" />
+                                <span className="truncate">{task.project.name}</span>
+                              </Link>
+                            )}
                             
                             {/* Tags */}
                             {task.tags && task.tags.length > 0 && (
@@ -2110,7 +1257,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                               <div className="flex items-center gap-2">
                                 {task.assignee ? (
                                   <div className="flex items-center gap-2" title={task.assignee.name}>
-                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#4a154b] to-[#7c3085] text-white text-[10px] font-medium flex items-center justify-center shadow-sm">
+                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#0B3D26] to-[#1E5C3A] text-white text-[10px] font-medium flex items-center justify-center shadow-sm">
                                       {task.assignee.name?.charAt(0)?.toUpperCase() || '?'}
                                     </div>
                                     <span className="text-xs text-gray-600 truncate max-w-[80px]">{task.assignee.name?.split(' ')[0]}</span>
@@ -2145,9 +1292,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                               )}
                             </div>
                           </div>
-                          
-                          {/* Hover overlay for quick actions */}
-                          <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white via-white/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+
                         </div>
                       ))}
                     </div>
@@ -2158,14 +1303,14 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                     <div className="flex items-center justify-between px-4 py-3 mt-4 border-t border-gray-200 bg-white rounded-b-lg">
                       <div className="flex-1 flex justify-between sm:hidden">
                         <button
-                          onClick={() => router.get(`/tasks?view=${currentView}&page=${pagination.current_page - 1}`)}
+                          onClick={() => goToPage(pagination.current_page - 1)}
                           disabled={!pagination.has_previous}
                           className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           Previous
                         </button>
                         <button
-                          onClick={() => router.get(`/tasks?view=${currentView}&page=${pagination.current_page + 1}`)}
+                          onClick={() => goToPage(pagination.current_page + 1)}
                           disabled={!pagination.has_next}
                           className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -2183,7 +1328,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                         <div>
                           <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
                             <button
-                              onClick={() => router.get(`/tasks?view=${currentView}&page=${pagination.current_page - 1}`)}
+                              onClick={() => goToPage(pagination.current_page - 1)}
                               disabled={!pagination.has_previous}
                               className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -2202,10 +1347,10 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                                 return (
                                   <button
                                     key={pageNum}
-                                    onClick={() => router.get(`/tasks?view=${currentView}&page=${pageNum}`)}
+                                    onClick={() => goToPage(pageNum)}
                                     className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
                                       pageNum === pagination.current_page
-                                        ? 'z-10 bg-[#4a154b] border-[#4a154b] text-white'
+                                        ? 'z-10 bg-[#0B3D26] border-[#0B3D26] text-white'
                                         : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
                                     }`}
                                   >
@@ -2221,7 +1366,7 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
                               return null;
                             })}
                             <button
-                              onClick={() => router.get(`/tasks?view=${currentView}&page=${pagination.current_page + 1}`)}
+                              onClick={() => goToPage(pagination.current_page + 1)}
                               disabled={!pagination.has_next}
                               className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -2240,135 +1385,109 @@ export default function Tasks({ sidebar = {}, tasks = [], counters = {}, current
             </div>
           </div>
         </main>
-        </div>
 
-        {/* Floating Action Button */}
-        <Link href="/tasks/new/" className={THEME.fab} title="Add Task">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
-            <path d="M12 5v14m-7-7h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-        </Link>
-
-        {/* Task Detail Drawer */}
-        {/* Edit Column Modal */}
-        {editingColumn && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-            {/* Backdrop */}
-            <div 
-              className="absolute inset-0 bg-black/50" 
-              onClick={() => setEditingColumn(null)}
+        {/* Floating create button - board view already has a per-column button */}
+        {viewMode !== 'board' && (
+          <div className="fixed bottom-6 right-6 z-50">
+            <TaskCreatePopover
+              status={boardColumns[0]?.id || 'todo'}
+              defaultProject={quickCreateProject}
+              trigger={({ toggle, open }) => (
+                <button
+                  onClick={toggle}
+                  className={`w-14 h-14 bg-[#0B3D26] hover:bg-[#14502F] text-white rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center ${
+                    open ? 'ring-2 ring-white/40' : ''
+                  }`}
+                  title="Create task"
+                  aria-label="Create task"
+                  aria-expanded={open}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
+                    <path d="M12 5v14m-7-7h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              )}
             />
-            
-            {/* Modal */}
-            <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
-              <div className="p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-semibold text-gray-800 text-sm">Edit option</h4>
-                  <button 
-                    onClick={() => setEditingColumn(null)} 
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                
-                {/* Preview Badge */}
-                <div className="flex justify-center mb-4">
-                  <span className={`px-3 py-1 text-sm font-medium rounded-full text-white ${columnForm.color}`}>
-                    {columnForm.label || editingColumn.label}
-                  </span>
-                </div>
-                
-                {/* Label Text */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Label text <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={columnForm.label}
-                    onChange={(e) => setColumnForm(prev => ({ ...prev, label: e.target.value }))}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                  />
-                </div>
-                
-                {/* Color Picker */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-orange-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500'].map((colorClass) => (
-                      <button
-                        key={colorClass}
-                        type="button"
-                        onClick={() => setColumnForm(prev => ({ ...prev, color: colorClass }))}
-                        className={`w-7 h-7 rounded-full ${colorClass} border-2 border-white ring-2 ${
-                          columnForm.color === colorClass ? 'ring-[#4a154b]' : 'ring-gray-200 hover:ring-gray-400'
-                        } transition-all`}
-                      />
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Description */}
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                  <input
-                    type="text"
-                    value={columnForm.description}
-                    onChange={(e) => setColumnForm(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder="Optional description..."
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b]/20 focus:border-[#4a154b]"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Visible in group headers and value pickers</p>
-                </div>
-                
-                {/* Actions */}
-                <div className="flex justify-end gap-2 pt-2">
-                  <button
-                    onClick={() => setEditingColumn(null)}
-                    className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-md hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleSaveColumn}
-                    disabled={isSavingColumn || !columnForm.label.trim()}
-                    className="px-4 py-2 text-sm font-medium text-white bg-[#4a154b] rounded-md hover:bg-[#3a1040] disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isSavingColumn ? 'Saving...' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
         )}
 
-        <Drawer
-          isOpen={isModalOpen}
-          onClose={closeModal}
-          title={isLoadingTask ? 'Loading Task...' : `Task #${selectedTaskData?.id || ''}`}
-          width="w-full sm:max-w-lg md:max-w-xl lg:max-w-3xl"
-          headerColor="bg-[#4a154b]"
-          headerTextColor="text-white"
+        {/* Edit Column Modal */}
+        <Modal
+          isOpen={!!editingColumn}
+          onClose={() => setEditingColumn(null)}
+          icon={Pencil}
+          title="Edit column"
+          size="sm"
+          footer={(
+            <>
+              <ModalButton variant="secondary" onClick={() => setEditingColumn(null)}>Cancel</ModalButton>
+              <ModalButton variant="primary" onClick={handleSaveColumn} disabled={!columnForm.label.trim()} loading={isSavingColumn}>
+                {isSavingColumn ? 'Saving…' : 'Save'}
+              </ModalButton>
+            </>
+          )}
         >
-          {isLoadingTask ? (
-            <TaskDrawerSkeleton />
-          ) : selectedTaskData ? (
-            <TaskDrawerContent
-              task={selectedTaskData}
-              comments={taskComments}
-              attachments={taskAttachments}
-              activities={taskActivities}
-              users={taskUsers}
-              groups={taskGroups}
-              onClose={closeModal}
-              onUpdate={refreshTaskData}
-            />
-          ) : null}
-        </Drawer>
-      </AppShell>
+          {editingColumn && (
+            <ModalBody className="space-y-4">
+              {/* Preview Badge */}
+              <div className="flex justify-center">
+                <span className={`px-3 py-1 text-sm font-medium rounded-full text-white ${columnForm.color}`}>
+                  {columnForm.label || editingColumn.label}
+                </span>
+              </div>
+
+              <div>
+                <label htmlFor="column-label" className="block text-sm font-medium text-gray-700 mb-1">
+                  Label text <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="column-label"
+                  type="text"
+                  autoFocus
+                  value={columnForm.label}
+                  onChange={(e) => setColumnForm(prev => ({ ...prev, label: e.target.value }))}
+                  onKeyDown={(e) => e.key === 'Enter' && columnForm.label.trim() && handleSaveColumn()}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26]"
+                />
+              </div>
+
+              <div>
+                <p className="block text-sm font-medium text-gray-700 mb-2">Color</p>
+                <div className="flex gap-2 flex-wrap">
+                  {['bg-gray-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-orange-500', 'bg-red-500', 'bg-purple-500', 'bg-pink-500'].map((colorClass) => (
+                    <button
+                      key={colorClass}
+                      type="button"
+                      aria-label={colorClass.replace('bg-', '').replace('-500', '')}
+                      aria-pressed={columnForm.color === colorClass}
+                      onClick={() => setColumnForm(prev => ({ ...prev, color: colorClass }))}
+                      className={`w-7 h-7 rounded-full ${colorClass} border-2 border-white ring-2 ${
+                        columnForm.color === colorClass ? 'ring-[#0B3D26]' : 'ring-gray-200 hover:ring-gray-400'
+                      } transition-all`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="column-description" className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <input
+                  id="column-description"
+                  type="text"
+                  value={columnForm.description}
+                  onChange={(e) => setColumnForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Optional description..."
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26]"
+                />
+                <p className="text-xs text-gray-500 mt-1">Visible in group headers and value pickers</p>
+              </div>
+            </ModalBody>
+          )}
+        </Modal>
+
+        </>
+        )}
+      </TasksLayout>
     </>
   )
 }

@@ -3,24 +3,34 @@ import { Head, useForm, Link } from '@inertiajs/react'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import Select from '../components/SearchableSelect'
+import DatePicker from '../components/pickers/DatePicker'
 import { THEME } from '../constants/theme'
 import RichEditor from '../components/RichEditor'
+import { priorityOptionIcon } from '../components/tasks/ui'
+import TaskTypeSelect from '../components/tasks/TaskTypeSelect'
+import { useUnsavedChanges } from '../context/UnsavedChangesContext'
 
-export default function AddTask({ groups = [], users = [] }) {
+export default function AddTask({ groups = [], users = [], projects = [], defaultProject = '' }) {
   const { data, setData, post, processing, errors } = useForm({
     title: '',
     description: '',
     assignee: '',
+    task_type: '',
     priority: 'normal',
     group: '',
     tags: '[]',
     due_date: '',
     watchers: '[]',
+    project: defaultProject || '',
   })
 
   const [tagInput, setTagInput] = useState('')
   const [selectedTags, setSelectedTags] = useState([])
   const [selectedWatchers, setSelectedWatchers] = useState([])
+  const [initialData] = useState(data)
+
+  const dirty = JSON.stringify(data) !== JSON.stringify(initialData)
+  useUnsavedChanges(dirty)
 
   useEffect(() => {
     if (errors && Object.keys(errors).length > 0) {
@@ -89,7 +99,7 @@ export default function AddTask({ groups = [], users = [] }) {
                   type="submit"
                   disabled={processing}
                   onClick={handleSubmit}
-                  className="px-6 py-2.5 bg-[#4a154b] text-white rounded-md hover:bg-[#0a2f33] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-6 py-2.5 bg-[#0B3D26] text-white rounded-md hover:bg-[#0a2f33] transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {processing ? 'Creating...' : 'Create Task'}
                 </button>
@@ -114,7 +124,7 @@ export default function AddTask({ groups = [], users = [] }) {
                       type="text"
                       value={data.title}
                       onChange={e => setData('title', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0B3D26] focus:border-transparent"
                       placeholder="Brief summary of the task"
                     />
                     {errors.title && <p className="text-sm text-red-600 mt-1">{errors.title}</p>}
@@ -177,10 +187,30 @@ export default function AddTask({ groups = [], users = [] }) {
                     </div>
                   </div>
 
+                  {/* Project */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Project</h3>
+                    <Select
+                      value={data.project}
+                      onChange={(value) => setData('project', value)}
+                      options={projects}
+                      placeholder="No project"
+                      displayKey="name"
+                      valueKey="uuid"
+                      searchable={true}
+                    />
+                  </div>
+
                   {/* Task Details */}
                   <div>
                     <h3 className="text-sm font-semibold text-gray-700 mb-3">Task Details</h3>
                     <div className="space-y-4">
+                      {/* Type */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                        <TaskTypeSelect value={data.task_type} onChange={(value) => setData('task_type', value)} />
+                      </div>
+
                       {/* Priority */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -195,6 +225,7 @@ export default function AddTask({ groups = [], users = [] }) {
                             { id: 'high', name: 'High' },
                             { id: 'urgent', name: 'Urgent' },
                           ]}
+                          optionIcon={priorityOptionIcon}
                           placeholder="Select priority"
                           displayKey="name"
                           valueKey="id"
@@ -206,11 +237,12 @@ export default function AddTask({ groups = [], users = [] }) {
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           Due Date
                         </label>
-                        <input
-                          type="date"
+                        <DatePicker
                           value={data.due_date}
-                          onChange={e => setData('due_date', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                          onChange={v => setData('due_date', v)}
+                          aria-label="Due date"
+                          size="lg"
+                          allowClear
                         />
                       </div>
                     </div>
@@ -225,13 +257,13 @@ export default function AddTask({ groups = [], users = [] }) {
                         value={tagInput}
                         onChange={e => setTagInput(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#0B3D26] focus:border-transparent"
                         placeholder="Add tags (press Enter)"
                       />
                       <button
                         type="button"
                         onClick={addTag}
-                        className="px-4 py-2 bg-[#4a154b] text-white rounded-md hover:bg-[#0a2f33] transition-colors"
+                        className="px-4 py-2 bg-[#0B3D26] text-white rounded-md hover:bg-[#0a2f33] transition-colors"
                       >
                         Add
                       </button>

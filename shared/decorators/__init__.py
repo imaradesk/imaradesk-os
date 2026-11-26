@@ -26,10 +26,8 @@ def _is_api_request(request):
 
 def require_app(app_slug):
     """
-    Decorator to check if an app is installed and trial is valid.
-    Shows appropriate pages:
-    - "App Not Installed" if not installed
-    - "Trial Expired" if trial has ended
+    Decorator to check if an app is installed.
+    Shows the "App Not Installed" page if it is not.
     
     For API requests, returns JSON response instead of Inertia page.
     
@@ -66,8 +64,6 @@ def require_app(app_slug):
                         'slug': app.slug,
                         'description': app.description,
                         'icon': app.icon,
-                        'price': float(app.price),
-                        'is_free': app.is_free,
                         'version': app.version,
                     }
                 except App.DoesNotExist:
@@ -76,8 +72,6 @@ def require_app(app_slug):
                         'slug': app_slug,
                         'description': 'This app is not available.',
                         'icon': '📦',
-                        'price': 0,
-                        'is_free': False,
                         'version': '1.0.0',
                     }
                 
@@ -92,68 +86,6 @@ def require_app(app_slug):
                 
                 return inertia_render(request, 'AppNotInstalled', {
                     'app': app_info,
-                    'return_url': request.META.get('HTTP_REFERER', '/'),
-                })
-            
-            # Check if trial has expired (only for trial subscriptions)
-            if installed_app.subscription_status == 'trial' and installed_app.is_trial_expired:
-                # Update status to expired
-                installed_app.subscription_status = 'expired'
-                installed_app.save(update_fields=['subscription_status'])
-                
-                app = installed_app.app
-                app_info = {
-                    'name': app.name,
-                    'slug': app.slug,
-                    'description': app.description,
-                    'icon': app.icon,
-                    'price': float(app.price),
-                    'is_free': app.is_free,
-                    'version': app.version,
-                }
-                
-                # Return JSON for API requests
-                if _is_api_request(request):
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'trial_expired',
-                        'message': f'Your trial for {app.name} has expired. Please upgrade to continue using this feature.',
-                        'app': app_info,
-                        'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                    }, status=403)
-                
-                return inertia_render(request, 'TrialExpired', {
-                    'app': app_info,
-                    'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                    'return_url': request.META.get('HTTP_REFERER', '/'),
-                })
-            
-            # Check if subscription is expired status
-            if installed_app.subscription_status == 'expired':
-                app = installed_app.app
-                app_info = {
-                    'name': app.name,
-                    'slug': app.slug,
-                    'description': app.description,
-                    'icon': app.icon,
-                    'price': float(app.price),
-                    'is_free': app.is_free,
-                    'version': app.version,
-                }
-                
-                # Return JSON for API requests
-                if _is_api_request(request):
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'subscription_expired',
-                        'message': f'Your subscription for {app.name} has expired. Please renew to continue using this feature.',
-                        'app': app_info,
-                        'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                    }, status=403)
-                
-                return inertia_render(request, 'TrialExpired', {
-                    'app': app_info,
-                    'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
                     'return_url': request.META.get('HTTP_REFERER', '/'),
                 })
             
@@ -174,12 +106,12 @@ def require_any_app(*app_slugs):
             # Import here to avoid circular imports
             from modules.settings.models import InstalledApp, App
             
-            # Check for any active, non-expired installation
+            # Check for any active installation
             try:
                 installed_app = InstalledApp.objects.filter(
                     app__slug__in=app_slugs,
                     is_active=True
-                ).exclude(subscription_status='expired').first()
+                ).first()
             except Exception as e:
                 logger.error(f"Error checking app installation for {app_slugs}: {e}")
                 installed_app = None
@@ -190,8 +122,6 @@ def require_any_app(*app_slugs):
                     'slug': app_slugs[0] if app_slugs else '',
                     'description': 'One of the required apps must be installed.',
                     'icon': '📦',
-                    'price': 0,
-                    'is_free': False,
                 }
                 
                 # Return JSON for API requests
@@ -208,37 +138,64 @@ def require_any_app(*app_slugs):
                     'return_url': request.META.get('HTTP_REFERER', '/'),
                 })
             
-            # Check trial expiration
-            if installed_app.subscription_status == 'trial' and installed_app.is_trial_expired:
-                installed_app.subscription_status = 'expired'
-                installed_app.save(update_fields=['subscription_status'])
-                
-                app = installed_app.app
-                app_info = {
-                    'name': app.name,
-                    'slug': app.slug,
-                    'description': app.description,
-                    'icon': app.icon,
-                    'price': float(app.price),
-                    'is_free': app.is_free,
-                }
-                
-                # Return JSON for API requests
-                if _is_api_request(request):
-                    return JsonResponse({
-                        'success': False,
-                        'error': 'trial_expired',
-                        'message': f'Your trial for {app.name} has expired.',
-                        'app': app_info,
-                        'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                    }, status=403)
-                
-                return inertia_render(request, 'TrialExpired', {
-                    'app': app_info,
-                    'trial_ended_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                    'return_url': request.META.get('HTTP_REFERER', '/'),
-                })
-            
             return view_func(request, *args, **kwargs)
         return _wrapped_view
     return decorator
+
+
+def is_admin_user(user):
+    """Superusers and users with the Administrator role. Everyone else (agents) is kept out of Administration."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    profile = getattr(user, 'profile', None)
+    return bool(profile and profile.role and profile.role.name == 'Administrator')
+
+
+def admin_required(view_func):
+    """
+    Decorator that restricts access to admin users only.
+    Users must be either:
+    - A superuser (is_superuser=True)
+    - Have an 'Admin' role in their userprofile
+    
+    For API requests, returns JSON 403 response.
+    For page requests, renders PermissionDenied Inertia page.
+    
+    Usage:
+        @admin_required
+        @login_required
+        def my_admin_view(request):
+            ...
+    """
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        user = request.user
+        
+        # Check if user is authenticated
+        if not user.is_authenticated:
+            if _is_api_request(request):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'authentication_required',
+                    'message': 'You must be logged in to access this resource.',
+                }, status=401)
+            return redirect('login')
+        
+        if not is_admin_user(user):
+            if _is_api_request(request):
+                return JsonResponse({
+                    'success': False,
+                    'error': 'permission_denied',
+                    'message': 'You do not have permission to access this resource. Admin access required.',
+                }, status=403)
+            
+            return inertia_render(request, 'PermissionDenied', {
+                'message': 'You do not have permission to access this page.',
+                'description': 'This page is restricted to administrators only.',
+                'return_url': request.META.get('HTTP_REFERER', '/'),
+            })
+        
+        return view_func(request, *args, **kwargs)
+    return _wrapped_view

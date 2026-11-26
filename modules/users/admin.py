@@ -17,8 +17,7 @@ class RoleAdmin(admin.ModelAdmin):
 
 @admin.register(Organization)
 class OrganizationAdmin(admin.ModelAdmin):
-	list_display = ("id", "name", "plan", "domain", "created_at")
-	list_filter = ("plan",)
+	list_display = ("id", "name", "domain", "created_at")
 	search_fields = ("name", "domain")
 
 

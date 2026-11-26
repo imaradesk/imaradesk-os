@@ -43,6 +43,9 @@ class Permission:
     CREATE_KNOWLEDGE_BASE = "create_knowledge_base"
     EDIT_KNOWLEDGE_BASE = "edit_knowledge_base"
     DELETE_KNOWLEDGE_BASE = "delete_knowledge_base"
+
+    # Tasks & Projects
+    MANAGE_PROJECTS = "manage_projects"
     
     @classmethod
     def get_all(cls):
@@ -87,6 +90,9 @@ class Permission:
             (cls.CREATE_KNOWLEDGE_BASE, "Create Knowledge Base"),
             (cls.EDIT_KNOWLEDGE_BASE, "Edit Knowledge Base"),
             (cls.DELETE_KNOWLEDGE_BASE, "Delete Knowledge Base"),
+
+            # Tasks & Projects
+            (cls.MANAGE_PROJECTS, "Manage All Projects"),
         ]
     
     @classmethod
@@ -132,5 +138,8 @@ class Permission:
                 (cls.CREATE_KNOWLEDGE_BASE, "Create Knowledge Base"),
                 (cls.EDIT_KNOWLEDGE_BASE, "Edit Knowledge Base"),
                 (cls.DELETE_KNOWLEDGE_BASE, "Delete Knowledge Base"),
+            ],
+            "Tasks & Projects": [
+                (cls.MANAGE_PROJECTS, "Manage All Projects"),
             ],
         }

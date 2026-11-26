@@ -1,304 +1,180 @@
-import React, { useState, useEffect } from 'react'
-import { Head } from '@inertiajs/react'
-import toast from 'react-hot-toast'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Head, Link } from '@inertiajs/react'
+import {
+  ArrowUpRight, CheckCircle2, Clock, Download, LayoutGrid, PackageCheck, PackageOpen, Search, Sparkles, X,
+} from 'lucide-react'
 import AppShell from '../components/AppShell'
-import SettingsSidenav from '../components/SettingsSidenav'
-import ConfirmDialog from '../components/ConfirmDialog'
-import { THEME, COLORS } from '../constants/theme'
-import { Globe, BookOpen, Package } from 'lucide-react'
+import { SettingsHeading } from '../components/settings/SettingsPage'
+import AppIcon from '../components/marketplace/AppIcon'
+import Tabs from '../components/Tabs'
 
-// Map icon names to Lucide components
-const iconMap = {
-  'globe': Globe,
-  'book-open': BookOpen,
-}
+const isComingSoon = (app) => app.status === 'coming_soon'
 
-const AppIcon = ({ iconName, className = "w-6 h-6" }) => {
-  const IconComponent = iconMap[iconName] || Package
-  return <IconComponent className={className} />
-}
+const TABS = [
+  { id: 'all', label: 'All', icon: LayoutGrid, match: () => true },
+  { id: 'installed', label: 'Installed', icon: PackageCheck, match: (app) => app.is_installed },
+  { id: 'available', label: 'Available', icon: Download, match: (app) => !app.is_installed && !isComingSoon(app) },
+  { id: 'soon', label: 'Coming soon', icon: Clock, match: isComingSoon },
+]
+
+const titleCase = (value = '') => value.charAt(0).toUpperCase() + value.slice(1)
 
 export default function Marketplace({ apps = [] }) {
-  const [sidenavOpen, setSidenavOpen] = useState(true)
   const [activeTab, setActiveTab] = useState('all')
+  const [category, setCategory] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
-  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, appId: null, action: null, appName: '' })
+  const searchRef = useRef(null)
 
-  const installedApps = apps.filter(app => app.is_installed)
-  const freeApps = apps.filter(app => app.is_free)
-  const popularApps = apps.filter(app => app.install_count > 5000)
+  // "/" focuses search, like the rest of the app's list pages
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false)
-    }, 1000)
-    return () => clearTimeout(timer)
+    const onKey = (e) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey) return
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
-  const getDisplayedApps = () => {
-    let filtered = apps
-    switch(activeTab) {
-      case 'installed':
-        filtered = installedApps
-        break
-      case 'free':
-        filtered = freeApps
-        break
-      case 'popular':
-        filtered = popularApps
-        break
-      default:
-        filtered = apps
-    }
-    
-    if (searchQuery) {
-      filtered = filtered.filter(app => 
-        app.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        app.description.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    }
-    
-    return filtered
-  }
 
-  const handleInstallConfirm = (appId, appName, isFree) => {
-    setConfirmDialog({ isOpen: true, appId, action: 'install', appName, isFree })
-  }
+  const categories = useMemo(() => [...new Set(apps.map((app) => app.category).filter(Boolean))], [apps])
+  const counts = useMemo(
+    () => Object.fromEntries(TABS.map((tab) => [tab.id, apps.filter(tab.match).length])),
+    [apps]
+  )
 
-  const handleUninstallConfirm = (appId, appName) => {
-    setConfirmDialog({ isOpen: true, appId, action: 'uninstall', appName })
-  }
+  const displayedApps = useMemo(() => {
+    const tab = TABS.find((t) => t.id === activeTab)
+    const query = searchQuery.trim().toLowerCase()
+    return apps.filter((app) =>
+      tab.match(app) &&
+      (category === 'all' || app.category === category) &&
+      (!query || app.name.toLowerCase().includes(query) || app.description.toLowerCase().includes(query))
+    )
+  }, [apps, activeTab, category, searchQuery])
 
-  const handleConfirmAction = async () => {
-    const { appId, action } = confirmDialog
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-    
-    if (action === 'install') {
-      toast.promise(
-        fetch(`/settings/marketplace/install/${appId}/`, {
-          method: 'POST',
-          headers: {
-            'X-CSRFToken': csrfToken,
-          },
-        }).then(async (response) => {
-          const data = await response.json()
-          if (data.success) {
-            setTimeout(() => window.location.reload(), 1000)
-            return data.message
-          } else {
-            throw new Error(data.message)
-          }
-        }),
-        {
-          loading: 'Installing app...',
-          success: (message) => message || 'App installed successfully!',
-          error: (err) => err.message || 'Failed to install app',
-        }
-      )
-    } else if (action === 'uninstall') {
-      toast.promise(
-        fetch(`/settings/marketplace/uninstall/${appId}/`, {
-          method: 'DELETE',
-          headers: {
-            'X-CSRFToken': csrfToken,
-          },
-        }).then(async (response) => {
-          const data = await response.json()
-          if (data.success) {
-            setTimeout(() => window.location.reload(), 1000)
-            return data.message
-          } else {
-            throw new Error(data.message)
-          }
-        }),
-        {
-          loading: 'Uninstalling app...',
-          success: (message) => message || 'App uninstalled successfully!',
-          error: (err) => err.message || 'Failed to uninstall app',
-        }
-      )
-    }
-  }
+  const hasFilters = searchQuery || category !== 'all' || activeTab !== 'all'
+  const clearFilters = () => { setSearchQuery(''); setCategory('all'); setActiveTab('all') }
+  const installedPct = apps.length ? Math.round((counts.installed / apps.length) * 100) : 0
 
   return (
     <>
       <Head title="Marketplace - Settings" />
-      
-      <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        onClose={() => setConfirmDialog({ isOpen: false, appId: null, action: null, appName: '' })}
-        onConfirm={handleConfirmAction}
-        title={confirmDialog.action === 'install' ? 'Install App' : 'Uninstall App'}
-        message={
-          confirmDialog.action === 'install' 
-            ? confirmDialog.isFree
-              ? `Install ${confirmDialog.appName}? This app is free and will be added to your workspace.`
-              : `Install ${confirmDialog.appName}? You'll get a 14-day free trial, then $${apps.find(a => a.id === confirmDialog.appId)?.price || 0}/month.`
-            : `Are you sure you want to uninstall ${confirmDialog.appName}? All app data and settings will be removed permanently.`
-        }
-        confirmText={confirmDialog.action === 'install' ? 'Install' : 'Uninstall'}
-        cancelText="Cancel"
-        confirmStyle={confirmDialog.action === 'install' ? 'primary' : 'danger'}
-      />
-      
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes bounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-10px); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .animate-spin-slow {
-          animation: spin 3s linear infinite;
-        }
-        .animate-bounce-slow {
-          animation: bounce 2s ease-in-out infinite;
-        }
-        .animate-pulse-slow {
-          animation: pulse 2s ease-in-out infinite;
-        }
-      `}</style>
-      
-      <AppShell active="settings">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          {sidenavOpen && <SettingsSidenav activeSection="marketplace" />}
-          
-          <main className="flex-1 bg-gray-50">
-            <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-3">
-              {!sidenavOpen && (
-                <button
-                  className="p-2 rounded-md hover:bg-gray-100"
-                  title="Show Settings Menu"
-                  onClick={() => setSidenavOpen(true)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500">
-                    <path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/>
-                  </svg>
-                </button>
-              )}
-              <h1 className="text-xl font-semibold text-gray-800">Marketplace</h1>
+      <AppShell active="settings" fixedHeight>
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <main className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
+            <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 flex flex-wrap items-center gap-3">
+              <SettingsHeading section="marketplace">Marketplace</SettingsHeading>
+              <div className="relative ml-auto w-full sm:w-72">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  placeholder="Search modules"
+                  aria-label="Search modules"
+                  className="w-full h-9 pl-9 pr-9 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26] transition-shadow"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setSearchQuery(''); e.currentTarget.blur() } }}
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:inline-flex h-5 px-1.5 items-center rounded border border-gray-200 bg-gray-50 text-[10px] font-medium text-gray-400">/</kbd>
+                )}
+              </div>
             </div>
 
-            <div className="p-6">
-              {/* Info Banner */}
-              <div className="mb-6 border border-blue-200 rounded-lg p-4 flex items-start gap-3" style={{ backgroundColor: '#e0f2fe' }}>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
-                </svg>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-blue-900 mb-1">💡 Extend Your Ticketing System</h3>
-                  <p className="text-sm text-blue-800">
-                    Discover powerful apps to enhance ImaraDesk.
-                  </p>
+            <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-6xl mx-auto w-full space-y-6">
+              {/* Overview */}
+              <section className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 animate-portalRise">
+                <div aria-hidden="true" className="pointer-events-none absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#0B3D26]/10 blur-3xl" />
+                <div className="relative flex flex-col lg:flex-row lg:items-center gap-5">
+                  <div className="flex items-start gap-4 flex-1 min-w-0">
+                    <span className="w-11 h-11 rounded-xl bg-[#0B3D26] text-white inline-flex items-center justify-center flex-shrink-0 shadow-sm">
+                      <Sparkles className="w-5 h-5" strokeWidth={1.75} />
+                    </span>
+                    <div className="min-w-0">
+                      <h1 className="text-lg font-semibold tracking-tight text-gray-900">Extend your helpdesk</h1>
+                      <p className="mt-0.5 text-sm text-gray-500">
+                        Add modules to Imaradesk as your team grows. Every module is free and ready the moment you install it.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3 lg:w-[22rem]">
+                    <Stat icon={PackageCheck} label="Installed" value={counts.installed} tone="text-emerald-600" />
+                    <Stat icon={PackageOpen} label="Available" value={counts.available} tone="text-[#0B3D26]" />
+                    <Stat icon={Clock} label="Coming soon" value={counts.soon} tone="text-amber-600" />
+                  </div>
                 </div>
+
+                
+              </section>
+
+              {/* Filters */}
+              <div className="flex flex-col md:flex-row md:items-center gap-3">
+                <Tabs
+                  label="Filter by status"
+                  active={activeTab}
+                  onChange={setActiveTab}
+                  tabs={TABS.map(({ id, label, icon }) => ({ id, label, icon, count: counts[id] }))}
+                />
+
+                {categories.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+                    {['all', ...categories].map((cat) => {
+                      const active = category === cat
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => setCategory(cat)}
+                          aria-pressed={active}
+                          className={`h-7 px-3 rounded-full border text-xs transition-colors ${
+                            active
+                              ? 'border-[#0B3D26] bg-[#0B3D26] text-white'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-900'
+                          }`}
+                        >
+                          {cat === 'all' ? 'All categories' : titleCase(cat)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="p-6">
-                  {/* Search Bar */}
-                  <div className="mb-6">
-                    <input
-                      type="text"
-                      placeholder="Search apps..."
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                  </div>
-
-                  {/* Tab Navigation */}
-                  <div className="mb-6 border-b border-gray-200">
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => setActiveTab('all')}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                          activeTab === 'all'
-                            ? 'text-white rounded-t-lg'
-                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-                        }`}
-                        style={activeTab === 'all' ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary } : {}}
-                      >
-                        All Apps
-                        <span className="ml-2 px-2 py-0.5 text-xs rounded-full" style={activeTab === 'all' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#e5e7eb' }}>
-                          {apps.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('installed')}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                          activeTab === 'installed'
-                            ? 'text-white rounded-t-lg'
-                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-                        }`}
-                        style={activeTab === 'installed' ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary } : {}}
-                      >
-                        Installed
-                        <span className="ml-2 px-2 py-0.5 text-xs rounded-full" style={activeTab === 'installed' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#e5e7eb' }}>
-                          {installedApps.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('free')}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                          activeTab === 'free'
-                            ? 'text-white rounded-t-lg'
-                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-                        }`}
-                        style={activeTab === 'free' ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary } : {}}
-                      >
-                        Free
-                        <span className="ml-2 px-2 py-0.5 text-xs rounded-full" style={activeTab === 'free' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#e5e7eb' }}>
-                          {freeApps.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab('popular')}
-                        className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                          activeTab === 'popular'
-                            ? 'text-white rounded-t-lg'
-                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-                        }`}
-                        style={activeTab === 'popular' ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary } : {}}
-                      >
-                        Popular
-                        <span className="ml-2 px-2 py-0.5 text-xs rounded-full" style={activeTab === 'popular' ? { backgroundColor: 'rgba(255,255,255,0.2)' } : { backgroundColor: '#e5e7eb' }}>
-                          {popularApps.length}
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Apps Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {isLoading ? (
-                      // Skeleton Loading Cards
-                      Array.from({ length: 6 }).map((_, index) => (
-                        <SkeletonCard key={index} />
-                      ))
-                    ) : (
-                      getDisplayedApps().map((app) => (
-                        <AppCard key={app.id} app={app} onInstall={handleInstallConfirm} onUninstall={handleUninstallConfirm} />
-                      ))
-                    )}
-                  </div>
-
-                  {/* Empty State */}
-                  {!isLoading && getDisplayedApps().length === 0 && (
-                    <div className="text-center py-12">
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-16 h-16 text-gray-400 mx-auto mb-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
-                      </svg>
-                      <h3 className="text-lg font-medium text-gray-900 mb-2">No apps found</h3>
-                      <p className="text-sm text-gray-500">Try selecting a different tab or clearing your search</p>
-                    </div>
+              {/* Apps grid */}
+              {displayedApps.length > 0 ? (
+                <div key={`${activeTab}-${category}`} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {displayedApps.map((app, index) => (
+                    <AppCard key={app.id} app={app} index={index} />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-14 px-6 text-center animate-portalRise">
+                  <span className="mx-auto mb-3 w-12 h-12 rounded-xl bg-gray-100 text-gray-400 inline-flex items-center justify-center">
+                    <PackageOpen className="w-6 h-6" strokeWidth={1.5} />
+                  </span>
+                  <h3 className="text-sm font-semibold text-gray-900">No modules found</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {searchQuery ? `Nothing matches “${searchQuery}”.` : 'There are no modules in this view yet.'}
+                  </p>
+                  {hasFilters && (
+                    <button type="button" onClick={clearFilters} className="mt-4 h-8 px-3 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                      Clear filters
+                    </button>
                   )}
                 </div>
-              </div>
+              )}
             </div>
           </main>
         </div>
@@ -307,155 +183,74 @@ export default function Marketplace({ apps = [] }) {
   )
 }
 
-function AppCard({ app, onInstall, onUninstall }) {
-  const isInstalled = app.is_installed
-  const isTrialExpired = app.is_trial_expired
-  const trialDaysRemaining = app.trial_days_remaining
-
-  const handleAction = () => {
-    if (isInstalled) {
-      onUninstall(app.id, app.name)
-    } else {
-      onInstall(app.id, app.name, app.is_free)
-    }
-  }
-
-  const getInstallButtonText = () => {
-    if (isInstalled) {
-      if (isTrialExpired) return 'Upgrade'
-      return 'Uninstall'
-    }
-    if (app.is_free) return 'Install Free'
-    return 'Start Trial'
-  }
-
-  const getStatusBadge = () => {
-    if (!isInstalled) return null
-    
-    if (isTrialExpired || app.subscription_status === 'expired') {
-      return (
-        <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>
-          Expired
-        </span>
-      )
-    }
-    if (app.subscription_status === 'trial' && trialDaysRemaining !== null) {
-      const bgColor = trialDaysRemaining <= 3 ? '#fef3c7' : '#dbeafe'
-      const textColor = trialDaysRemaining <= 3 ? '#92400e' : '#1e40af'
-      return (
-        <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded" style={{ backgroundColor: bgColor, color: textColor }}>
-          {trialDaysRemaining} day{trialDaysRemaining !== 1 ? 's' : ''} left
-        </span>
-      )
-    }
-    if (app.subscription_status === 'active') {
-      return (
-        <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded" style={{ backgroundColor: '#d1fae5', color: '#065f46' }}>
-          Active
-        </span>
-      )
-    }
-    return null
-  }
-
-  const handleButtonClick = () => {
-    if (isInstalled && isTrialExpired) {
-      // Redirect to upgrade/payment page
-      window.location.href = `/settings/marketplace/?app=${app.slug}&upgrade=true`
-    } else {
-      handleAction()
-    }
-  }
-
+function Stat({ icon: Icon, label, value, tone }) {
   return (
-    <div className={`bg-white border rounded-lg p-5 hover:shadow-lg transition-shadow duration-200 ${isTrialExpired ? 'border-red-200' : 'border-gray-200'}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#f0f9ff' }}>
-            <AppIcon iconName={app.icon} className="w-6 h-6 text-blue-600" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900">{app.name}</h3>
-            <div className="flex items-center gap-2">
-              <p className="text-xs text-gray-500">{app.category}</p>
-              {app.version && (
-                <span className="text-xs text-gray-400">v{app.version}</span>
-              )}
-            </div>
-          </div>
-        </div>
-        {getStatusBadge()}
+    <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-[11px] text-gray-500 whitespace-nowrap">
+        <Icon className={`w-3.5 h-3.5 ${tone}`} strokeWidth={2} /> {label}
       </div>
-
-      <p className="text-sm text-gray-600 mb-4 line-clamp-2">{app.description}</p>
-
-      {/* Trial expired warning */}
-      {isInstalled && isTrialExpired && (
-        <div className="mb-4 p-2 rounded bg-red-50 border border-red-100">
-          <p className="text-xs text-red-700 flex items-center gap-1">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            Trial expired - Upgrade to continue using
-          </p>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-        <div>
-          {app.is_free ? (
-            <span className="text-lg font-bold" style={{ color: COLORS.primary }}>Free</span>
-          ) : (
-            <div>
-              <span className="text-lg font-bold text-gray-900">${app.price}</span>
-              <span className="text-sm text-gray-500">/mo</span>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={handleButtonClick}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-            isInstalled
-              ? isTrialExpired
-                ? 'bg-orange-500 text-white hover:bg-orange-600'
-                : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
-              : 'text-white hover:opacity-90'
-          }`}
-          style={!isInstalled ? { backgroundColor: COLORS.primary } : {}}
-        >
-          {getInstallButtonText()}
-        </button>
-      </div>
+      <p className="mt-1 text-xl font-semibold text-gray-900 tabular-nums">{value}</p>
     </div>
   )
 }
 
-function SkeletonCard() {
+function StatusBadge({ app }) {
+  if (isComingSoon(app)) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-200 bg-amber-50 text-[11px] font-medium text-amber-700">
+        <Clock className="w-3 h-3" /> Soon
+      </span>
+    )
+  }
+  if (app.is_installed) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-emerald-200 bg-emerald-50 text-[11px] font-medium text-emerald-700">
+        <CheckCircle2 className="w-3 h-3" /> Installed
+      </span>
+    )
+  }
+  if (app.status === 'beta') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-[11px] font-medium text-sky-700">
+        Beta
+      </span>
+    )
+  }
+  return null
+}
+
+function AppCard({ app, index }) {
+  const soon = isComingSoon(app)
+  const action = soon ? 'Learn more' : app.is_installed ? 'Manage' : 'Install'
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-5 animate-pulse">
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-lg bg-gray-200"></div>
-          <div>
-            <div className="h-4 w-32 bg-gray-200 rounded mb-2"></div>
-            <div className="h-3 w-20 bg-gray-200 rounded"></div>
-          </div>
-        </div>
+    <Link
+      href={`/administration/marketplace/app/${app.slug}/`}
+      style={{ animationDelay: `${Math.min(index, 8) * 50}ms` }}
+      className={`group relative flex flex-col rounded-2xl border border-gray-200 bg-white p-5 animate-portalRise portal-lift hover:shadow-card-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0B3D26]/30 ${
+        soon ? '' : 'hover:border-[#0B3D26]/30'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <AppIcon app={app} className={`transition-transform duration-300 group-hover:scale-105 group-hover:-rotate-3 ${soon ? 'opacity-70' : ''}`} />
+        <StatusBadge app={app} />
       </div>
 
-      <div className="space-y-2 mb-4">
-        <div className="h-3 bg-gray-200 rounded"></div>
-        <div className="h-3 bg-gray-200 rounded w-5/6"></div>
-      </div>
+      <h3 className="mt-4 font-semibold text-gray-900 group-hover:text-[#0B3D26] transition-colors">{app.name}</h3>
+      <p className="mt-0.5 text-xs text-gray-400">
+        {titleCase(app.category)}{app.version && ` · ${app.version}`}
+      </p>
+      <p className="mt-2.5 text-sm text-gray-600 leading-relaxed line-clamp-2">{app.description}</p>
 
-      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-        <div>
-          <div className="h-5 w-16 bg-gray-200 rounded mb-1"></div>
-          <div className="h-3 w-24 bg-gray-200 rounded"></div>
-        </div>
-        <div className="h-9 w-24 bg-gray-200 rounded-lg"></div>
+      <div className="mt-auto pt-4 flex items-center justify-between">
+        <span className="text-xs text-gray-500">
+          {app.install_count > 0 && <>{app.install_count.toLocaleString()} installs</>}
+        </span>
+        <span className={`inline-flex items-center gap-0.5 text-xs font-medium transition-colors ${soon ? 'text-gray-400' : 'text-gray-500 group-hover:text-[#0B3D26]'}`}>
+          {action}
+          <ArrowUpRight className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+        </span>
       </div>
-    </div>
+    </Link>
   )
 }

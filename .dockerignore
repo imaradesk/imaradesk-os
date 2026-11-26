@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+dist/
+build/
+*.so
+*.log
+
+# Node
+frontend/node_modules/
+frontend/.cache/
+frontend/.npm/
+
+# Environment
+.env
+.env.*
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker (credentials)
+Dockerfile
+build.py
+
+# OS files
+media/
+staticfiles/
+logs/

@@ -1,183 +1,94 @@
-import React, { useState } from 'react';
-import { Head, Link, router } from '@inertiajs/react';
+import React, { useState } from 'react'
+import { Head, Link, router } from '@inertiajs/react'
+import { BookOpen, Search } from 'lucide-react'
+import PortalShell from '../components/portal/PortalShell'
+import {
+  BTN_PRIMARY, BTN_SECONDARY, PORTAL_CARD, PortalArticleCard, PortalEmpty, PortalHero, PortalSearch, Reveal,
+} from '../components/portal/PortalUI'
 
-const THEME = {
-  primary: '#4a154b',
-  gradient: 'linear-gradient(135deg, #4a154b 0%, #165c66 100%)',
-};
-
-export default function PortalKBSearch({ query, results, tenant_name }) {
-  const [searchQuery, setSearchQuery] = useState(query || '');
+export default function PortalKBSearch({ query, results = [], tenant_name }) {
+  const [searchQuery, setSearchQuery] = useState(query || '')
 
   const handleSearch = (e) => {
-    e.preventDefault();
+    e.preventDefault()
     if (searchQuery.trim()) {
-      router.visit(`/portal/kb-search?q=${encodeURIComponent(searchQuery)}`);
+      router.visit(`/portal/kb-search?q=${encodeURIComponent(searchQuery)}`)
     }
-  };
+  }
 
   return (
     <>
-      <Head title={`Search: ${query}`} />
-      
-      <div className="min-h-screen bg-gray-50">
-        {/* Header - Blended with Hero */}
-        <header className="shadow-sm" style={{ background: THEME.primary }}>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="flex items-center justify-between">
-              <Link href="/portal/" className="text-2xl font-bold text-white">
-                {tenant_name || 'Customer Portal'}
-              </Link>
-              <div className="flex gap-3">
-                <Link
-                  href="/portal/create-ticket/"
-                  className="px-4 py-2 bg-white text-gray-800 rounded-lg transition-all hover:bg-gray-100 font-medium"
-                >
-                  Submit Ticket
-                </Link>
-                <Link
-                  href="/portal/"
-                  className="px-4 py-2 border-2 border-white text-white rounded-lg hover:bg-white hover:bg-opacity-10 transition-all font-medium"
-                >
-                  Back to Home
-                </Link>
-              </div>
-            </div>
-          </div>
-        </header>
+      <Head title={`Search: ${query || 'Knowledge base'}`} />
 
-        {/* Search Section */}
-        <div className="py-12 px-4" style={{ background: THEME.primary }}>
-          <div className="max-w-4xl mx-auto">
-            <h1 className="text-3xl font-bold text-white mb-6 text-center">
-              Search Knowledge Base
-            </h1>
-            
-            {/* Search Bar */}
-            <form onSubmit={handleSearch}>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search for answers..."
-                  className="w-full px-6 py-4 pr-32 rounded-lg text-gray-800 text-lg focus:outline-none focus:ring-4 focus:ring-white focus:ring-opacity-30 shadow-lg"
+      <PortalShell tenantName={tenant_name}>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 pb-4">
+          <PortalHero
+            compact
+            eyebrow="Knowledge base"
+            title="Search articles"
+            description="Find answers from our support documentation."
+          >
+            <PortalSearch
+              size="lg"
+              value={searchQuery}
+              onChange={setSearchQuery}
+              onSubmit={handleSearch}
+              placeholder="Search for answers…"
+            />
+          </PortalHero>
+
+          <div className="mt-6">
+            {query ? (
+              <>
+                <div className="flex items-end justify-between gap-4 mb-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-gray-900 tracking-tight">
+                      Results for “{query}”
+                    </h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {results.length} {results.length === 1 ? 'article' : 'articles'} found
+                    </p>
+                  </div>
+                  <Link href="/portal/kb/" className="text-xs font-medium text-[#0B3D26] hover:underline">Browse all</Link>
+                </div>
+
+                {results.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {results.map((article, i) => (
+                      <Reveal key={article.uuid} index={Math.min(i, 9)} step={50} className="flex">
+                        <PortalArticleCard article={article} />
+                      </Reveal>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={PORTAL_CARD}>
+                    <PortalEmpty
+                      icon={Search}
+                      title="No results found"
+                      description={`We could not find articles matching “${query}”. Try different keywords or ask our support team.`}
+                      action={
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Link href="/portal/kb/" className={BTN_SECONDARY}>Browse articles</Link>
+                          <Link href="/portal/create-ticket/" className={BTN_PRIMARY}>Submit a ticket</Link>
+                        </div>
+                      }
+                    />
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className={PORTAL_CARD}>
+                <PortalEmpty
+                  icon={BookOpen}
+                  title="Start your search"
+                  description="Enter a keyword above to search our knowledge base."
+                  action={<Link href="/portal/kb/" className={BTN_SECONDARY}>Browse all articles</Link>}
                 />
-                <button
-                  type="submit"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2 bg-gray-800 text-white rounded-md hover:bg-gray-900 transition-all font-medium"
-                >
-                  Search
-                </button>
               </div>
-            </form>
+            )}
           </div>
         </div>
-
-        {/* Results */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          {query && (
-            <>
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold" style={{ color: THEME.primary }}>
-                  Search Results for "{query}"
-                </h2>
-                <p className="text-gray-600 mt-1">
-                  Found {results.length} {results.length === 1 ? 'article' : 'articles'}
-                </p>
-              </div>
-
-              {results.length > 0 ? (
-                <div className="grid grid-cols-1 gap-6">
-                  {results.map((article) => (
-                    <Link
-                      key={article.uuid}
-                      href={`/portal/kb/${article.uuid}/`}
-                      className="bg-white -sm border border-gray-200 hover:shadow-md transition-all overflow-hidden flex"
-                    >
-                      {article.display_image && (
-                        <div className="w-48 flex-shrink-0">
-                          <img
-                            src={article.display_image}
-                            alt={article.title}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      )}
-                      <div className="p-6 flex-1 flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
-                            {article.title}
-                          </h3>
-                          <p className="text-gray-600 mb-3">{article.excerpt}</p>
-                          <div className="flex items-center gap-3 text-sm text-gray-500">
-                            <span className="px-3 py-1 bg-gray-100 rounded-full">
-                              {article.category}
-                            </span>
-                            <span>👁️ {article.views} views</span>
-                          </div>
-                        </div>
-                        <div className="flex-shrink-0">
-                          <svg
-                            className="w-6 h-6 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 5l7 7-7 7"
-                            />
-                          </svg>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-white -sm border border-gray-200 p-12 text-center">
-                  <div className="text-6xl mb-4">🔍</div>
-                  <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
-                    No Results Found
-                  </h3>
-                  <p className="text-gray-600 mb-6">
-                    We couldn't find any articles matching "{query}". Try different keywords or{' '}
-                    <Link
-                      href="/portal/create-ticket/"
-                      className="font-medium hover:underline"
-                      style={{ color: THEME.primary }}
-                    >
-                      submit a support ticket
-                    </Link>
-                    .
-                  </p>
-                  <Link
-                    href="/portal/"
-                    className="inline-block px-6 py-2 text-white rounded-lg transition-all"
-                    style={{ background: THEME.primary }}
-                  >
-                    Back to Home
-                  </Link>
-                </div>
-              )}
-            </>
-          )}
-
-          {!query && (
-            <div className="bg-white -sm border border-gray-200 p-12 text-center">
-              <div className="text-6xl mb-4">💡</div>
-              <h3 className="text-xl font-semibold mb-2" style={{ color: THEME.primary }}>
-                Start Your Search
-              </h3>
-              <p className="text-gray-600">
-                Enter a keyword above to search our knowledge base
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+      </PortalShell>
     </>
-  );
+  )
 }

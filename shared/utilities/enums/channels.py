@@ -38,6 +38,8 @@ class DefaultChannel:
 class ChannelsRegistry:
     """Registry of default channels - single source of truth for seeding"""
 
+    # NOTE: Only 'web' channel is activated by default.
+    # Other channels require setup/configuration before activation.
     CHANNELS = [
         DefaultChannel(
             channel_id="web",
@@ -77,3 +79,7 @@ class ChannelsRegistry:
             if ch.channel_id == channel_id:
                 return ch.to_dict()
         return None
+
+    @classmethod
+    def get_by_status(cls, status: ChannelStatus) -> List[Dict]:
+        return [ch.to_dict() for ch in cls.CHANNELS if ch.status == status]

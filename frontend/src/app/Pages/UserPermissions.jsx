@@ -1,14 +1,19 @@
 import React from 'react'
 import { Head, useForm, Link } from '@inertiajs/react'
+import { useDirtyState, useUnsavedChanges } from '../context/UnsavedChangesContext'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import { THEME } from '../constants/theme'
+import SimpleSelect from '../components/SimpleSelect'
 
 export default function UserPermissions({ user = {}, roles = [], permissions = {} }) {
   const { data, setData, post, processing } = useForm({
     role: user.role_id || '',
     permissions: user.custom_permissions || [],
   })
+  const dirty = useDirtyState(data)
+  const { allowNextNavigation } = useUnsavedChanges(dirty)
+
 
   const togglePermission = (permCode) => {
     const current = data.permissions || []
@@ -67,16 +72,7 @@ export default function UserPermissions({ user = {}, roles = [], permissions = {
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Assign Role</label>
-                  <select
-                    value={data.role}
-                    onChange={(e) => setData('role', e.target.value)}
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent border-gray-300"
-                  >
-                    <option value="">— No Role —</option>
-                    {roles.map((role) => (
-                      <option key={role.id} value={role.id}>{role.name}</option>
-                    ))}
-                  </select>
+                  <SimpleSelect value={data.role} onChange={(value) => setData('role', value)} options={roles} emptyLabel="— No Role —" />
                   <p className="mt-1 text-xs text-gray-500">User inherits all permissions from the selected role</p>
                 </div>
 
@@ -93,7 +89,7 @@ export default function UserPermissions({ user = {}, roles = [], permissions = {
                               type="checkbox"
                               checked={data.permissions.includes(code)}
                               onChange={() => togglePermission(code)}
-                              className="rounded border-gray-300 text-[#4a154b] focus:ring-[#4a154b]"
+                              className="rounded border-gray-300 text-[#0B3D26] focus:ring-[#0B3D26]"
                             />
                             <span className="text-sm text-gray-700">{label}</span>
                           </label>

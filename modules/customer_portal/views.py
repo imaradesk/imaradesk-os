@@ -1,18 +1,23 @@
+from shared.utilities.organization import organization_name
+from urllib.parse import urlencode
 from django.contrib.auth.decorators import login_required
+from shared.decorators import admin_required
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.views.decorators.http import require_http_methods
-from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
 from django.db import models
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.conf import settings as django_settings
 from inertia import inertia
 import json
-import traceback
+import logging
 from datetime import datetime
 
 from shared.decorators import require_app
-from shared.models import Client
+from shared.utilities.throttle import rate_limited
+from shared.utilities.uploads import store_upload, UploadError
 from .models import (
     Customer, 
     CustomerContact, 
@@ -21,24 +26,10 @@ from .models import (
     CustomerAsset,
     CustomerPortalSettings
 )
-from modules.ticket.models import Ticket
+from modules.ticket.models import Ticket, TicketAttachment
 
 
-def get_organization_name():
-    """Get the current organization name for single-tenant setup."""
-    try:
-        org = Client.get_current()
-        return org.name if org else 'Support'
-    except Exception:
-        return 'Support'
-
-
-def get_organization():
-    """Get the current organization for single-tenant setup."""
-    try:
-        return Client.get_current()
-    except Exception:
-        return None
+logger = logging.getLogger(__name__)
 
 
 # ============================================
@@ -50,11 +41,11 @@ def get_organization():
 def portal_home(request):
     """Customer portal homepage."""
     from modules.kb.models import KBCategory, KBArticle
+    from modules.ticket.models import Ticket
     
     settings = CustomerPortalSettings.get_settings()
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
     
     # Get KB categories and articles if enabled
     categories = []
@@ -168,11 +159,16 @@ def portal_home(request):
     }
 
 
-@require_app('customer-portal')
-@inertia('CustomerPortalLogin')
 def portal_login(request):
-    """Customer portal login page."""
-    return {}
+    """Requesters sign in on the main login page, then return to where they were."""
+    next_url = request.GET.get('next') or '/portal/'
+    if not (next_url.startswith('/') and url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure(),
+    )):
+        next_url = '/portal/'
+    if request.user.is_authenticated:
+        return redirect(next_url)
+    return redirect(f"/?{urlencode({'next': next_url})}")
 
 
 @require_app('customer-portal')
@@ -181,9 +177,13 @@ def portal_create_ticket(request):
     """Guest ticket creation page."""
     settings = CustomerPortalSettings.get_settings()
     from modules.kb.models import KBArticle
+    from modules.settings.models import Channel
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
+    
+    # Check if web channel is activated
+    web_channel = Channel.objects.filter(channel_id='web').first()
+    web_channel_active = web_channel.is_activated if web_channel else False
     
     # Get suggested KB articles if enabled
     suggested_articles = []
@@ -193,9 +193,11 @@ def portal_create_ticket(request):
     return {
         'suggest_kb': settings.suggest_kb_before_ticket,
         'tenant_name': tenant_name,
+        'webChannelActive': web_channel_active,
         'suggested_articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:100] + '...' if len(a.content) > 100 else a.content,
@@ -206,18 +208,46 @@ def portal_create_ticket(request):
 
 
 @require_app('customer-portal')
-@csrf_exempt
+@require_http_methods(["POST"])
+def portal_upload_file(request):
+    """Upload a ticket attachment from the public portal (CSRF protected and rate limited)."""
+    if rate_limited(request, 'portal-upload', limit=20, window=10 * 60):
+        return JsonResponse({'success': False, 'error': 'Too many uploads. Please try again later.'}, status=429)
+    if 'file' not in request.FILES:
+        return JsonResponse({'success': False, 'error': 'No file provided'}, status=400)
+
+    uploaded_file = request.FILES['file']
+    try:
+        stored = store_upload(uploaded_file, 'ticket-attachments')
+    except UploadError as exc:
+        return JsonResponse({'success': False, 'error': exc.message}, status=exc.status)
+
+    return JsonResponse({'success': True, 'file_url': stored.get('url'), 'file_name': uploaded_file.name})
+
+
+@require_app('customer-portal')
 @require_http_methods(["POST"])
 def portal_submit_ticket(request):
     """Submit a guest ticket."""
+    if rate_limited(request, 'portal-submit-ticket', limit=20, window=10 * 60):
+        return JsonResponse({'success': False, 'message': 'Too many requests. Please try again later.'}, status=429)
     try:
+        # Check if web channel is active before allowing ticket creation
+        from modules.settings.models import Channel
+        web_channel = Channel.objects.filter(channel_id='web').first()
+        if not web_channel or not web_channel.is_activated:
+            return JsonResponse({
+                'success': False,
+                'message': 'Ticket submission is currently unavailable. The web channel is inactive.'
+            }, status=400)
+        
         # Parse request body
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError as e:
             return JsonResponse({
                 'success': False,
-                'message': f'Invalid JSON data: {str(e)}'
+                'message': 'Invalid JSON data'
             }, status=400)
         
         # Validate required fields
@@ -231,6 +261,10 @@ def portal_submit_ticket(request):
             }, status=400)
         
         # Create ticket in main ticket table
+        # Get 'web' channel for customer portal tickets
+        from modules.settings.models import Channel
+        web_channel = Channel.objects.filter(channel_id='web').first()
+        
         ticket = Ticket.objects.create(
             title=data.get('subject'),
             description=data.get('description'),
@@ -239,9 +273,25 @@ def portal_submit_ticket(request):
             guest_email=data.get('email'),
             guest_phone=data.get('phone', ''),
             source='customer_portal',
+            channel=web_channel,
             status=Ticket.Status.NEW,
             priority=Ticket.Priority.NORMAL,
         )
+        
+        # Create ticket attachments
+        attachments = data.get('attachments', [])
+        for attachment in attachments:
+            # only links we could have issued: no javascript:/data: URLs
+            if str(attachment.get('url', '')).startswith(('https://', 'http://', '/media/')):
+                TicketAttachment.objects.create(
+                    ticket=ticket,
+                    file_url=attachment.get('url'),
+                    file_name=attachment.get('name', 'attachment'),
+                    file_size=attachment.get('size'),
+                    file_type=attachment.get('type', ''),
+                    is_internal=False,
+                    uploaded_by=None  # Guest upload
+                )
         
         # Note: Confirmation email is sent by ticket signals 
         # based on NotificationSettings.notify_new_ticket_created
@@ -252,12 +302,10 @@ def portal_submit_ticket(request):
             'message': 'Ticket created successfully'
         })
     except Exception as e:
-        # Log the full error for debugging
-        print(f"Ticket creation error: {str(e)}")
-        print(traceback.format_exc())
+        logger.exception('Ticket creation failed')
         return JsonResponse({
             'success': False,
-            'message': f'Error creating ticket: {str(e)}'
+            'message': 'Error creating ticket'
         }, status=500)
 
 
@@ -267,8 +315,7 @@ def portal_track_ticket(request):
     """Track ticket page."""
     settings = CustomerPortalSettings.get_settings()
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
     
     ticket_number = request.GET.get('ticket_number', '')
     email = request.GET.get('email', '')
@@ -346,7 +393,7 @@ def portal_ticket_detail(request, ticket_number):
     from modules.ticket.models import TicketComment, ActivityStream
 
     settings = CustomerPortalSettings.get_settings()
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
 
     ticket = get_object_or_404(Ticket, ticket_number=ticket_number, requester=request.user)
 
@@ -398,7 +445,6 @@ def portal_ticket_detail(request, ticket_number):
 
 @require_app('customer-portal')
 @login_required(login_url='/portal/login/')
-@csrf_exempt
 @require_http_methods(["POST"])
 def portal_ticket_add_comment(request, ticket_number):
     """Add a comment to a ticket as an authenticated user."""
@@ -408,7 +454,7 @@ def portal_ticket_add_comment(request, ticket_number):
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError as e:
-            return JsonResponse({'success': False, 'message': f'Invalid JSON: {str(e)}'}, status=400)
+            return JsonResponse({'success': False, 'message': 'Invalid JSON data'}, status=400)
 
         message = data.get('message', '').strip()
         if not message:
@@ -443,16 +489,29 @@ def portal_ticket_add_comment(request, ticket_number):
             }
         })
     except Exception as e:
-        print(f"Comment creation error: {str(e)}")
-        print(traceback.format_exc())
-        return JsonResponse({'success': False, 'message': f'Error adding comment: {str(e)}'}, status=500)
+        logger.exception('Comment creation failed')
+        return JsonResponse({'success': False, 'message': 'Error adding comment'}, status=500)
 
 
 @require_app('customer-portal')
-@csrf_exempt
+@inertia('PortalSystemStatus')
+def portal_system_status(request):
+    """System status page showing service health."""
+    settings = CustomerPortalSettings.get_settings()
+    
+    tenant_name = organization_name(settings.portal_title)
+    
+    return {
+        'tenant_name': tenant_name,
+    }
+
+
+@require_app('customer-portal')
 @require_http_methods(["POST"])
 def portal_add_comment(request):
     """Add a comment to a guest ticket."""
+    if rate_limited(request, 'portal-add-comment', limit=20, window=10 * 60):
+        return JsonResponse({'success': False, 'message': 'Too many requests. Please try again later.'}, status=429)
     try:
         # Parse request body
         try:
@@ -460,7 +519,7 @@ def portal_add_comment(request):
         except json.JSONDecodeError as e:
             return JsonResponse({
                 'success': False,
-                'message': f'Invalid JSON data: {str(e)}'
+                'message': 'Invalid JSON data'
             }, status=400)
         
         # Validate required fields
@@ -519,12 +578,10 @@ def portal_add_comment(request):
             }
         })
     except Exception as e:
-        # Log the full error for debugging
-        print(f"Comment creation error: {str(e)}")
-        print(traceback.format_exc())
+        logger.exception('Comment creation failed')
         return JsonResponse({
             'success': False,
-            'message': f'Error adding comment: {str(e)}'
+            'message': 'Error adding comment'
         }, status=500)
 
 
@@ -546,8 +603,7 @@ def portal_kb_list(request):
     if kb_settings.require_login_to_view and not request.user.is_authenticated:
         return redirect('customer_portal_login')
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
     
     # Get selected category from query param
     category_id = request.GET.get('category')
@@ -587,6 +643,7 @@ def portal_kb_list(request):
         'articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:200] + '...' if len(a.content) > 200 else a.content,
@@ -595,6 +652,7 @@ def portal_kb_list(request):
                 'author': f"{a.created_by.first_name} {a.created_by.last_name}".strip() if a.created_by and a.created_by.first_name else (a.created_by.username if a.created_by else None),
                 'updated_at': a.updated_at.strftime('%b %d, %Y') if a.updated_at else None,
                 'created_at': a.created_at.isoformat(),
+                'display_image': a.display_image or '',
             }
             for a in articles
         ],
@@ -604,7 +662,7 @@ def portal_kb_list(request):
 
 @require_app('customer-portal')
 @inertia('PortalKBArticle')
-def portal_kb_article(request, article_id):
+def portal_kb_article(request, uuid):
     """View KB article in customer portal."""
     from modules.kb.models import KBArticle
     from modules.settings.models import KnowledgeBaseSettings
@@ -620,10 +678,9 @@ def portal_kb_article(request, article_id):
     if kb_settings.require_login_to_view and not request.user.is_authenticated:
         return redirect('customer_portal_login')
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
     
-    article = get_object_or_404(KBArticle, id=article_id, status='published')
+    article = get_object_or_404(KBArticle, uuid=uuid, status='published')
     
     # Increment view count
     article.views += 1
@@ -639,19 +696,23 @@ def portal_kb_article(request, article_id):
         'tenant_name': tenant_name,
         'article': {
             'id': article.id,
+            'uuid': str(article.uuid),
             'title': article.title,
             'content': article.content,
             'category': article.category.name,
             'views': article.views,
             'created_at': article.created_at.isoformat(),
             'updated_at': article.updated_at.isoformat(),
+            'display_image': article.display_image or '',
         },
         'related_articles': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:100] + '...' if len(a.content) > 100 else a.content,
+                'display_image': a.display_image or '',
             }
             for a in related_articles
         ]
@@ -677,8 +738,7 @@ def portal_kb_search(request):
     if kb_settings.require_login_to_view and not request.user.is_authenticated:
         return redirect('customer_portal_login')
     
-    # Get tenant/business name
-    tenant_name = get_organization_name() or settings.portal_title
+    tenant_name = organization_name(settings.portal_title)
     
     query = request.GET.get('q', '')
     results = []
@@ -696,11 +756,13 @@ def portal_kb_search(request):
         'results': [
             {
                 'id': a.id,
+                'uuid': str(a.uuid),
                 'title': a.title,
                 'slug': a.slug,
                 'excerpt': a.content[:200] + '...' if len(a.content) > 200 else a.content,
                 'category': a.category.name,
                 'views': a.views,
+                'display_image': a.display_image or '',
             }
             for a in results
         ]
@@ -712,13 +774,13 @@ def portal_kb_search(request):
 def portal_surveys(request):
     """Customer survey page with business-type specific questions."""
     from .survey_questions import SurveyQuestions
+    from shared.models import Client
     
     settings = CustomerPortalSettings.get_settings()
     
-    # Get tenant/business name and type
-    org = get_organization()
-    tenant_name = org.name if org else settings.portal_title
-    business_type = getattr(org, 'business_type', 'Other') if org else 'Other'
+    tenant_name = organization_name(settings.portal_title)
+    client = Client.get_current()
+    business_type = getattr(client, 'business_type', None) or 'Other'
     
     # Get questions for the business type
     questions = SurveyQuestions.get_questions_for_business_type(business_type)
@@ -763,544 +825,5 @@ def portal_surveys_submit(request):
     except Exception as e:
         return JsonResponse({
             'success': False,
-            'message': f'Error submitting survey: {str(e)}'
+            'message': 'Error submitting survey'
         }, status=500)
-
-
-# ============================================
-# Customers Management (Admin)
-# ============================================
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomersList')
-def customers_list(request):
-    """List all customers."""
-    page = int(request.GET.get('page', 1))
-    search = request.GET.get('search', '')
-    status_filter = request.GET.get('status', '')
-    tier_filter = request.GET.get('tier', '')
-    
-    customers = Customer.objects.all().select_related('account_owner')
-    
-    if search:
-        customers = customers.filter(
-            models.Q(name__icontains=search) |
-            models.Q(email__icontains=search) |
-            models.Q(slug__icontains=search)
-        )
-    
-    if status_filter:
-        customers = customers.filter(status=status_filter)
-    
-    if tier_filter:
-        customers = customers.filter(tier=tier_filter)
-    
-    paginator = Paginator(customers, 20)
-    page_obj = paginator.get_page(page)
-    
-    return {
-        'customers': {
-            'data': [
-                {
-                    'id': c.id,
-                    'name': c.name,
-                    'slug': c.slug,
-                    'email': c.email,
-                    'phone': c.phone,
-                    'status': c.status,
-                    'tier': c.tier,
-                    'account_owner': {
-                        'id': c.account_owner.id,
-                        'name': f"{c.account_owner.first_name} {c.account_owner.last_name}"
-                    } if c.account_owner else None,
-                    'portal_enabled': c.portal_enabled,
-                    'created_at': c.created_at.isoformat(),
-                }
-                for c in page_obj
-            ],
-            'total': paginator.count,
-            'per_page': 20,
-            'current_page': page,
-            'last_page': paginator.num_pages,
-        },
-        'filters': {
-            'search': search,
-            'status': status_filter,
-            'tier': tier_filter,
-        }
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerForm')
-def customer_add(request):
-    """Add new customer form."""
-    from django.contrib.auth import get_user_model
-    User = get_user_model()
-    
-    users = User.objects.filter(is_active=True)
-    
-    return {
-        'customer': None,
-        'users': [
-            {'id': u.id, 'name': f"{u.first_name} {u.last_name} ({u.email})"}
-            for u in users
-        ]
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerView')
-def customer_view(request, customer_id):
-    """View customer details."""
-    customer = get_object_or_404(Customer, id=customer_id)
-    
-    # Get contacts
-    contacts = customer.contacts.all()
-    
-    # Get recent tickets
-    recent_tickets = customer.tickets.all()[:10]
-    
-    # Get assets
-    assets = customer.assets.all()
-    
-    return {
-        'customer': {
-            'id': customer.id,
-            'name': customer.name,
-            'slug': customer.slug,
-            'email': customer.email,
-            'phone': customer.phone,
-            'website': customer.website,
-            'address_line1': customer.address_line1,
-            'address_line2': customer.address_line2,
-            'city': customer.city,
-            'state': customer.state,
-            'postal_code': customer.postal_code,
-            'country': customer.country,
-            'status': customer.status,
-            'tier': customer.tier,
-            'account_owner': {
-                'id': customer.account_owner.id,
-                'name': f"{customer.account_owner.first_name} {customer.account_owner.last_name}"
-            } if customer.account_owner else None,
-            'portal_enabled': customer.portal_enabled,
-            'allow_ticket_creation': customer.allow_ticket_creation,
-            'allow_kb_access': customer.allow_kb_access,
-            'billing_email': customer.billing_email,
-            'tax_id': customer.tax_id,
-            'notes': customer.notes,
-            'created_at': customer.created_at.isoformat(),
-        },
-        'contacts': [
-            {
-                'id': c.id,
-                'full_name': c.full_name,
-                'email': c.email,
-                'phone': c.phone,
-                'job_title': c.job_title,
-                'role': c.role,
-                'is_primary': c.is_primary,
-                'portal_access': c.portal_access,
-            }
-            for c in contacts
-        ],
-        'recent_tickets': [
-            {
-                'id': t.id,
-                'ticket_number': t.ticket_number,
-                'subject': t.subject,
-                'status': t.status,
-                'priority': t.priority,
-                'created_at': t.created_at.isoformat(),
-            }
-            for t in recent_tickets
-        ],
-        'assets': [
-            {
-                'id': a.id,
-                'name': a.name,
-                'asset_tag': a.asset_tag,
-                'status': a.status,
-                'warranty_expiry': a.warranty_expiry.isoformat() if a.warranty_expiry else None,
-            }
-            for a in assets
-        ]
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerForm')
-def customer_edit(request, customer_id):
-    """Edit customer form."""
-    customer = get_object_or_404(Customer, id=customer_id)
-    from django.contrib.auth import get_user_model
-    User = get_user_model()
-    
-    users = User.objects.filter(is_active=True)
-    
-    return {
-        'customer': {
-            'id': customer.id,
-            'name': customer.name,
-            'slug': customer.slug,
-            'email': customer.email,
-            'phone': customer.phone,
-            'website': customer.website,
-            'address_line1': customer.address_line1,
-            'address_line2': customer.address_line2,
-            'city': customer.city,
-            'state': customer.state,
-            'postal_code': customer.postal_code,
-            'country': customer.country,
-            'status': customer.status,
-            'tier': customer.tier,
-            'account_owner_id': customer.account_owner.id if customer.account_owner else None,
-            'portal_enabled': customer.portal_enabled,
-            'allow_ticket_creation': customer.allow_ticket_creation,
-            'allow_kb_access': customer.allow_kb_access,
-            'billing_email': customer.billing_email,
-            'tax_id': customer.tax_id,
-            'notes': customer.notes,
-        },
-        'users': [
-            {'id': u.id, 'name': f"{u.first_name} {u.last_name} ({u.email})"}
-            for u in users
-        ]
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@require_http_methods(["POST"])
-def customer_delete(request, customer_id):
-    """Delete a customer."""
-    customer = get_object_or_404(Customer, id=customer_id)
-    customer.delete()
-    
-    return JsonResponse({
-        'success': True,
-        'message': f'Customer "{customer.name}" deleted successfully'
-    })
-
-
-# ============================================
-# Customer Contacts
-# ============================================
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerContactForm')
-def customer_contact_add(request, customer_id):
-    """Add contact to customer."""
-    customer = get_object_or_404(Customer, id=customer_id)
-    
-    return {
-        'customer': {
-            'id': customer.id,
-            'name': customer.name,
-        },
-        'contact': None
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerContactForm')
-def customer_contact_edit(request, contact_id):
-    """Edit customer contact."""
-    contact = get_object_or_404(CustomerContact, id=contact_id)
-    
-    return {
-        'customer': {
-            'id': contact.customer.id,
-            'name': contact.customer.name,
-        },
-        'contact': {
-            'id': contact.id,
-            'first_name': contact.first_name,
-            'last_name': contact.last_name,
-            'email': contact.email,
-            'phone': contact.phone,
-            'job_title': contact.job_title,
-            'role': contact.role,
-            'is_primary': contact.is_primary,
-            'portal_access': contact.portal_access,
-            'receive_notifications': contact.receive_notifications,
-            'notes': contact.notes,
-        }
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@require_http_methods(["POST"])
-def customer_contact_delete(request, contact_id):
-    """Delete a customer contact."""
-    contact = get_object_or_404(CustomerContact, id=contact_id)
-    contact.delete()
-    
-    return JsonResponse({
-        'success': True,
-        'message': 'Contact deleted successfully'
-    })
-
-
-# ============================================
-# Customer Tickets
-# ============================================
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerTicketsList')
-def customer_tickets_list(request):
-    """List all customer tickets."""
-    page = int(request.GET.get('page', 1))
-    
-    tickets = CustomerTicket.objects.all().select_related('customer', 'contact', 'assigned_to')
-    
-    paginator = Paginator(tickets, 20)
-    page_obj = paginator.get_page(page)
-    
-    return {
-        'tickets': {
-            'data': [
-                {
-                    'id': t.id,
-                    'ticket_number': t.ticket_number,
-                    'customer': t.customer.name,
-                    'contact': t.contact.full_name if t.contact else None,
-                    'subject': t.subject,
-                    'status': t.status,
-                    'priority': t.priority,
-                    'assigned_to': f"{t.assigned_to.first_name} {t.assigned_to.last_name}" if t.assigned_to else None,
-                    'created_at': t.created_at.isoformat(),
-                }
-                for t in page_obj
-            ],
-            'total': paginator.count,
-            'per_page': 20,
-            'current_page': page,
-            'last_page': paginator.num_pages,
-        }
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerTicketView')
-def customer_ticket_view(request, ticket_id):
-    """View customer ticket details."""
-    ticket = get_object_or_404(CustomerTicket, id=ticket_id)
-    comments = ticket.comments.all().select_related('author')
-    
-    return {
-        'ticket': {
-            'id': ticket.id,
-            'ticket_number': ticket.ticket_number,
-            'customer': {
-                'id': ticket.customer.id,
-                'name': ticket.customer.name,
-            },
-            'contact': {
-                'id': ticket.contact.id,
-                'full_name': ticket.contact.full_name,
-                'email': ticket.contact.email,
-            } if ticket.contact else None,
-            'subject': ticket.subject,
-            'description': ticket.description,
-            'status': ticket.status,
-            'priority': ticket.priority,
-            'assigned_to': {
-                'id': ticket.assigned_to.id,
-                'name': f"{ticket.assigned_to.first_name} {ticket.assigned_to.last_name}"
-            } if ticket.assigned_to else None,
-            'portal_visible': ticket.portal_visible,
-            'customer_satisfaction_rating': ticket.customer_satisfaction_rating,
-            'customer_feedback': ticket.customer_feedback,
-            'created_at': ticket.created_at.isoformat(),
-            'updated_at': ticket.updated_at.isoformat(),
-        },
-        'comments': [
-            {
-                'id': c.id,
-                'author': f"{c.author.first_name} {c.author.last_name}" if c.author else 'System',
-                'comment': c.comment,
-                'is_internal': c.is_internal,
-                'created_at': c.created_at.isoformat(),
-            }
-            for c in comments
-        ]
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@require_http_methods(["POST"])
-def customer_ticket_update(request, ticket_id):
-    """Update customer ticket."""
-    ticket = get_object_or_404(CustomerTicket, id=ticket_id)
-    data = json.loads(request.body)
-    
-    # Update fields
-    for field in ['status', 'priority', 'assigned_to_id', 'portal_visible']:
-        if field in data:
-            setattr(ticket, field, data[field])
-    
-    # Handle resolved/closed timestamps
-    if data.get('status') == 'resolved' and not ticket.resolved_at:
-        from django.utils import timezone
-        ticket.resolved_at = timezone.now()
-    
-    if data.get('status') == 'closed' and not ticket.closed_at:
-        from django.utils import timezone
-        ticket.closed_at = timezone.now()
-    
-    ticket.save()
-    
-    return JsonResponse({
-        'success': True,
-        'message': 'Ticket updated successfully'
-    })
-
-
-# ============================================
-# Customer Assets
-# ============================================
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerAssetForm')
-def customer_asset_add(request, customer_id):
-    """Add asset to customer."""
-    customer = get_object_or_404(Customer, id=customer_id)
-    
-    return {
-        'customer': {
-            'id': customer.id,
-            'name': customer.name,
-        },
-        'asset': None
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerAssetForm')
-def customer_asset_edit(request, asset_id):
-    """Edit customer asset."""
-    asset = get_object_or_404(CustomerAsset, id=asset_id)
-    
-    return {
-        'customer': {
-            'id': asset.customer.id,
-            'name': asset.customer.name,
-        },
-        'asset': {
-            'id': asset.id,
-            'name': asset.name,
-            'asset_tag': asset.asset_tag,
-            'serial_number': asset.serial_number,
-            'model': asset.model,
-            'manufacturer': asset.manufacturer,
-            'status': asset.status,
-            'purchase_date': asset.purchase_date.isoformat() if asset.purchase_date else None,
-            'warranty_expiry': asset.warranty_expiry.isoformat() if asset.warranty_expiry else None,
-            'support_level': asset.support_level,
-            'support_expiry': asset.support_expiry.isoformat() if asset.support_expiry else None,
-            'notes': asset.notes,
-        }
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@require_http_methods(["POST"])
-def customer_asset_delete(request, asset_id):
-    """Delete a customer asset."""
-    asset = get_object_or_404(CustomerAsset, id=asset_id)
-    asset.delete()
-    
-    return JsonResponse({
-        'success': True,
-        'message': 'Asset deleted successfully'
-    })
-
-
-# ============================================
-# Customer Portal Settings
-# ============================================
-
-@require_app('customer-portal')
-@login_required
-@inertia('CustomerPortalSettings')
-def customer_portal_settings(request):
-    """Customer portal settings page."""
-    settings = CustomerPortalSettings.get_settings()
-    
-    return {
-        'settings': {
-            # Portal Branding
-            'portal_title': settings.portal_title,
-            'portal_logo': settings.portal_logo,
-            'portal_welcome_message': settings.portal_welcome_message,
-            
-            # Portal Features
-            'enable_portal': settings.enable_portal,
-            'allow_guest_tickets': settings.allow_guest_tickets,
-            'require_approval_for_new_contacts': settings.require_approval_for_new_contacts,
-            
-            # Ticket Settings
-            'default_ticket_priority': settings.default_ticket_priority,
-            'auto_assign_tickets': settings.auto_assign_tickets,
-            'notify_on_new_ticket': settings.notify_on_new_ticket,
-            'notify_customer_on_update': settings.notify_customer_on_update,
-            
-            # Knowledge Base Integration
-            'show_kb_in_portal': settings.show_kb_in_portal,
-            'suggest_kb_before_ticket': settings.suggest_kb_before_ticket,
-            
-            # Customer Satisfaction
-            'enable_satisfaction_survey': settings.enable_satisfaction_survey,
-            'survey_delay_hours': settings.survey_delay_hours,
-            
-            # Asset Management
-            'show_assets_in_portal': settings.show_assets_in_portal,
-            'allow_customers_to_add_assets': settings.allow_customers_to_add_assets,
-            
-            # Security
-            'require_2fa_for_portal': settings.require_2fa_for_portal,
-            'session_timeout_minutes': settings.session_timeout_minutes,
-        }
-    }
-
-
-@require_app('customer-portal')
-@login_required
-@require_http_methods(["POST"])
-def customer_portal_settings_update(request):
-    """Update customer portal settings."""
-    try:
-        settings = CustomerPortalSettings.get_settings()
-        data = json.loads(request.body)
-        
-        # Update settings
-        for field, value in data.items():
-            if hasattr(settings, field):
-                setattr(settings, field, value)
-        
-        settings.save()
-        
-        return JsonResponse({
-            'success': True,
-            'message': 'Customer portal settings saved successfully'
-        })
-    except Exception as e:
-        return JsonResponse({
-            'success': False,
-            'message': str(e)
-        }, status=400)

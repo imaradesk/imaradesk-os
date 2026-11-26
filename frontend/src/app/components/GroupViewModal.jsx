@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react'
 import { router } from '@inertiajs/react'
 import Modal, { ModalHeader, ModalBody } from './Modal'
 import { COLORS } from '../constants/theme'
+import api from '../../utils/axios'
+import Tabs from './Tabs'
 
 export default function GroupViewModal({ isOpen, onClose, groupId }) {
   const [activeTab, setActiveTab] = useState('users')
@@ -12,10 +14,9 @@ export default function GroupViewModal({ isOpen, onClose, groupId }) {
     if (isOpen && groupId) {
       setLoading(true)
       // Fetch group details
-      fetch(`/settings/team/groups/${groupId}/view/`)
-        .then(res => res.json())
-        .then(data => {
-          setGroupData(data)
+      api.get(`/administration/team/groups/${groupId}/view/`)
+        .then(res => {
+          setGroupData(res.data)
           setTimeout(() => setLoading(false), 1000) // Simulate loading
         })
         .catch(() => {
@@ -70,29 +71,16 @@ export default function GroupViewModal({ isOpen, onClose, groupId }) {
           </ModalHeader>
 
           {/* Tabs */}
-          <div className="border-b border-gray-200">
-            <div className="flex px-6">
-              <button
-                onClick={() => setActiveTab('users')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'users'
-                    ? 'border-[#4a154b] text-[#4a154b]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Users ({groupData.users?.length || 0})
-              </button>
-              <button
-                onClick={() => setActiveTab('tickets')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'tickets'
-                    ? 'border-[#4a154b] text-[#4a154b]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Tickets ({groupData.tickets?.length || 0})
-              </button>
-            </div>
+          <div className="border-b border-gray-200 px-6 py-2">
+            <Tabs
+              label="Group sections"
+              active={activeTab}
+              onChange={setActiveTab}
+              tabs={[
+                { id: 'users', label: 'Users', count: groupData.users?.length || 0 },
+                { id: 'tickets', label: 'Tickets', count: groupData.tickets?.length || 0 },
+              ]}
+            />
           </div>
 
           {/* Tab Content */}
@@ -234,7 +222,7 @@ function TicketCard({ ticket }) {
         </div>
 
         <a
-          href={`/tickets/${ticket.id}/`}
+          href={`/tickets/${ticket.uuid}/`}
           className="ml-4 text-sm text-blue-600 hover:text-blue-700"
         >
           View

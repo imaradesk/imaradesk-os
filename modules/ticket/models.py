@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from modules.users.models import Organization
+from shared.utilities.sanitization import sanitize_rich_text
 import uuid
 
 User = get_user_model()
@@ -33,7 +34,6 @@ class Ticket(models.Model):
         ('api', 'API/Integrations'),
         ('internal', 'Internal/Staff-created'),
         ('customer_portal', 'Customer Portal'),
-        ('telegram', 'Telegram'),
         ('whatsapp', 'WhatsApp'),
     ]
 
@@ -229,8 +229,10 @@ class Ticket(models.Model):
         
         # Check SLA hold state (for pending/on hold)
         try:
-            if hasattr(self, 'sla') and self.sla and self.sla.is_on_hold:
-                return 'pending'  # On Hold / Pending
+            # Automatic holds (business hours, holidays) must not change how the ticket looks
+            if (hasattr(self, 'sla') and self.sla and self.sla.is_on_hold
+                    and not (self.sla.hold_reason or '').startswith('SYSTEM_')):
+                return 'pending'  # Manually put on hold
         except Exception:
             pass
         
@@ -307,7 +309,10 @@ class Ticket(models.Model):
             time_diff = response_due - now
             total_seconds = time_diff.total_seconds()
             
-            if response_breached or total_seconds < 0:
+            if ticket_sla.first_responded_at and not response_breached:
+                # Answered in time, the response target no longer applies
+                response_status = 'on_track'
+            elif response_breached or total_seconds < 0:
                 response_status = 'breached'
                 response_overdue = abs(total_seconds) / 3600  # hours
             else:
@@ -339,7 +344,7 @@ class Ticket(models.Model):
                     resolution_status = 'on_track'
         
         # Overall SLA status (based on calculated statuses, not just DB flags)
-        if resolution_status == 'breached':
+        if resolution_status == 'breached' or response_status == 'breached':
             overall_status = 'breached'
         elif response_status == 'at_risk' or resolution_status == 'at_risk':
             overall_status = 'at_risk'
@@ -424,6 +429,9 @@ class Ticket(models.Model):
                 self.resolved_at = timezone.now()
         elif self.status not in (self.Status.RESOLVED, self.Status.CLOSED) and self.resolved_at:
             self.resolved_at = None
+        
+        # The UI renders descriptions as HTML and they can come from guests and email
+        self.description = sanitize_rich_text(self.description)
         
         super().save(*args, **kwargs)
         
@@ -576,6 +584,11 @@ class TicketComment(models.Model):
     
     def __str__(self):
         return f"Comment by {self.author} on Ticket #{self.ticket.id}"
+
+    def save(self, *args, **kwargs):
+        # Rendered as HTML by the UI; guests and inbound email can write comments
+        self.message = sanitize_rich_text(self.message)
+        super().save(*args, **kwargs)
 
 
 class ActivityStream(models.Model):

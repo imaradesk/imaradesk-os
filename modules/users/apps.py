@@ -5,3 +5,7 @@ class UsersConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'modules.users'
     label = 'users'  # Keep original label for migrations
+    
+    def ready(self):
+        # Import signals to register them
+        from . import signals  # noqa

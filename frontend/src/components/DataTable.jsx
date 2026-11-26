@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { Popover } from './Popover'
 import NoDataFound from './NoDataFound'
+import SimpleSelect from '../app/components/SimpleSelect'
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
@@ -19,6 +20,8 @@ export default function DataTable({
   // Row click
   onRowClick = null,
   rowClassName = '',
+  // Compact rows for dense admin workspaces
+  dense = false,
 }) {
   const [sortKey, setSortKey] = useState(defaultSortKey)
   const [sortDir, setSortDir] = useState(defaultSortDir)
@@ -125,7 +128,7 @@ export default function DataTable({
           onClick={() => handlePageChange(i)}
           className={`min-w-[32px] h-8 border-y border-r border-gray-300 text-sm font-medium transition-colors ${
             i === activePage
-              ? 'bg-[#4a154b] text-white border-[#4a154b]'
+              ? 'bg-[#0B3D26] text-white border-[#0B3D26]'
               : 'text-gray-700 hover:bg-gray-100'
           }`}
         >
@@ -143,7 +146,7 @@ export default function DataTable({
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
       {/* Toolbar */}
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between gap-3 flex-wrap">
+      <div className={`${dense ? 'px-4 py-2' : 'px-4 py-3'} border-b border-gray-200 flex items-center justify-between gap-3 flex-wrap`}>
         <div className="text-sm text-gray-500">
           {loading ? 'Loading…' : `${totalItems} result${totalItems === 1 ? '' : 's'}`}
         </div>
@@ -179,7 +182,7 @@ export default function DataTable({
                     type="checkbox"
                     checked={!hiddenColumns.includes(col.key)}
                     onChange={() => toggleColumn(col.key)}
-                    className="rounded border-gray-300 text-[#4a154b] focus:ring-[#4a154b]"
+                    className="rounded border-gray-300 text-[#0B3D26] focus:ring-[#0B3D26]"
                   />
                   <span className="text-sm text-gray-700">{col.header}</span>
                 </label>
@@ -200,7 +203,7 @@ export default function DataTable({
                 return (
                   <th
                     key={col.key}
-                    className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider select-none ${
+                    className={`${dense ? 'px-4 py-2.5 text-[11px]' : 'px-6 py-3 text-xs'} text-left font-medium text-gray-500 uppercase tracking-wider select-none ${
                       isSortable ? 'cursor-pointer hover:text-gray-700 hover:bg-gray-100 transition-colors' : ''
                     } ${col.headerClassName || ''}`}
                     style={col.width ? { width: col.width } : undefined}
@@ -209,11 +212,11 @@ export default function DataTable({
                     <div className="flex items-center gap-1.5">
                       <span>{col.header}</span>
                       {isSortable && (
-                        <span className={`inline-flex flex-col leading-none ${isSorted ? 'text-[#4a154b]' : 'text-gray-300'}`}>
-                          <svg className={`w-3 h-3 ${isSorted && sortDir === 'asc' ? 'text-[#4a154b]' : ''}`} viewBox="0 0 12 12" fill="currentColor">
+                        <span className={`inline-flex flex-col leading-none ${isSorted ? 'text-[#0B3D26]' : 'text-gray-300'}`}>
+                          <svg className={`w-3 h-3 ${isSorted && sortDir === 'asc' ? 'text-[#0B3D26]' : ''}`} viewBox="0 0 12 12" fill="currentColor">
                             <path d="M6 2L10 7H2L6 2Z" />
                           </svg>
-                          <svg className={`w-3 h-3 -mt-0.5 ${isSorted && sortDir === 'desc' ? 'text-[#4a154b]' : ''}`} viewBox="0 0 12 12" fill="currentColor">
+                          <svg className={`w-3 h-3 -mt-0.5 ${isSorted && sortDir === 'desc' ? 'text-[#0B3D26]' : ''}`} viewBox="0 0 12 12" fill="currentColor">
                             <path d="M6 10L2 5H10L6 10Z" />
                           </svg>
                         </span>
@@ -253,7 +256,7 @@ export default function DataTable({
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
                   {visibleColumns.map(col => (
-                    <td key={col.key} className={`px-6 py-4 text-sm ${col.cellClassName || ''}`}>
+                    <td key={col.key} className={`${dense ? 'px-4 py-2.5' : 'px-6 py-4'} text-sm ${col.cellClassName || ''}`}>
                       {col.render ? col.render(row, idx) : (col.accessor ? col.accessor(row) : row[col.key])}
                     </td>
                   ))}
@@ -271,15 +274,11 @@ export default function DataTable({
           <div className="flex items-center gap-3 text-sm text-gray-600">
             <div className="flex items-center gap-1.5">
               <span className="hidden sm:inline">Show</span>
-              <select
-                value={pageSize}
-                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                className="border border-gray-300 rounded-md px-2 py-1 text-sm bg-transparent focus:outline-none focus:ring-0 focus:border-gray-300"
-              >
-                {PAGE_SIZE_OPTIONS.map(opt => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
-              </select>
+              <SimpleSelect
+                compact className="w-20" ariaLabel="Rows per page"
+                value={pageSize} onChange={(value) => handlePageSizeChange(Number(value))}
+                options={PAGE_SIZE_OPTIONS.map(opt => ({ id: opt, name: opt }))}
+              />
               <span className="hidden sm:inline">per page</span>
             </div>
             <span className="text-gray-400">|</span>

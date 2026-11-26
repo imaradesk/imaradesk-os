@@ -64,7 +64,7 @@ const ImagePreview = ({ src, alt, onError }) => {
     <>
       {loading && (
         <div className="absolute inset-0 bg-gray-100 flex items-center justify-center">
-          <div className="w-6 h-6 border-2 border-gray-300 border-t-[#4a154b] rounded-full animate-spin" />
+          <div className="w-6 h-6 border-2 border-gray-300 border-t-[#0B3D26] rounded-full animate-spin" />
         </div>
       )}
       <img
@@ -88,7 +88,7 @@ export default function AttachmentsTab({
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto flex flex-col">
       {onAddAttachment && (
         <div className="flex justify-end mb-4">
           <Button
@@ -104,7 +104,7 @@ export default function AttachmentsTab({
       )}
 
       {attachments.length === 0 ? (
-        <div className="text-center py-12">
+        <div className="flex-1 flex flex-col items-center justify-center text-center">
           <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
           </svg>
@@ -128,7 +128,7 @@ export default function AttachmentsTab({
                 href={att.file_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="group relative bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-all hover:border-[#4a154b]"
+                className="group relative bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-all hover:border-[#0B3D26]"
               >
                 {/* Preview area */}
                 <div className={`relative ${compact ? 'h-24' : 'h-32'} bg-gray-50 overflow-hidden`}>
@@ -161,7 +161,7 @@ export default function AttachmentsTab({
                 
                 {/* File info */}
                 <div className={`${compact ? 'p-2' : 'p-3'}`}>
-                  <p className={`font-medium text-gray-900 truncate group-hover:text-[#4a154b] ${compact ? 'text-xs' : 'text-sm'}`}>
+                  <p className={`font-medium text-gray-900 truncate group-hover:text-[#0B3D26] ${compact ? 'text-xs' : 'text-sm'}`}>
                     {att.file_name}
                   </p>
                   <div className={`flex items-center gap-2 text-gray-500 mt-1 ${compact ? 'text-xs' : 'text-xs'}`}>

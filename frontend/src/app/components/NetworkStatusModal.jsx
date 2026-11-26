@@ -1,5 +1,7 @@
+import Modal from './Modal'
 import React, { useState, useEffect } from 'react'
-import { Wifi, Loader2, CheckCircle2, WifiOff } from 'lucide-react'
+import { Wifi, WifiOff, Loader2 } from 'lucide-react'
+import okImg from '../assets/ok.jpg'
 
 export default function NetworkStatusModal() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
@@ -41,73 +43,33 @@ export default function NetworkStatusModal() {
     }
   }, [])
 
-  if (!showModal) return null
-
+  // Not dismissible: it closes itself once the connection is back
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center">
-      {/* Backdrop - no click handler to prevent closing */}
-      <div className="absolute inset-0 bg-black bg-opacity-60 backdrop-blur-sm" />
-      
-      {/* Modal */}
-      <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6 animate-fadeIn">
+    <Modal isOpen={showModal} dismissible={false} zIndex="z-[200]" size="md">
+      <div className="px-6 py-8 text-center">
         {showSuccess ? (
-          // Success state
           <>
-            <div className="flex justify-center mb-4">
-              <CheckCircle2 className="w-24 h-24 text-green-500" />
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-2">
-                <Wifi className="w-6 h-6 text-green-600" />
-                <h3 className="text-lg font-semibold text-green-600">
-                  Reconnected!
-                </h3>
-              </div>
-              <p className="text-sm text-gray-600">
-                Your internet connection has been restored.
-              </p>
-            </div>
+            <img src={okImg} alt="" className="w-28 h-28 mx-auto object-contain mb-4" />
+            <h3 className="flex items-center justify-center gap-2 text-lg font-semibold text-green-600">
+              <Wifi className="w-5 h-5" /> Reconnected
+            </h3>
+            <p className="mt-1 text-sm text-gray-600">Your internet connection has been restored.</p>
           </>
         ) : (
-          // Offline/Reconnecting state
           <>
-            <div className="flex justify-center mb-4">
-              <WifiOff className="w-24 h-24 text-red-500" />
-            </div>
-            <div className="text-center">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                No Internet Connection
-              </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                Please check your network connection and try again.
+            <span className="w-12 h-12 mx-auto mb-4 rounded-full bg-red-50 text-red-600 flex items-center justify-center">
+              <WifiOff className="w-6 h-6" />
+            </span>
+            <h3 className="text-lg font-semibold text-gray-900">No internet connection</h3>
+            <p className="mt-1 text-sm text-gray-600">Check your network connection. We'll reconnect automatically.</p>
+            {isReconnecting && (
+              <p className="mt-4 flex items-center justify-center gap-2 text-sm text-gray-500" role="status">
+                <Loader2 className="w-4 h-4 animate-spin" /> Reconnecting…
               </p>
-              
-              {isReconnecting && (
-                <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Reconnecting...</span>
-                </div>
-              )}
-            </div>
+            )}
           </>
         )}
       </div>
-
-      <style>{`
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-            transform: scale(0.95);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.2s ease-out;
-        }
-      `}</style>
-    </div>
+    </Modal>
   )
 }

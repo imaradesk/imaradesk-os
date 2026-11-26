@@ -1,472 +1,201 @@
-import React, { useState } from 'react';
-import { Head, Link, router } from '@inertiajs/react';
-import toast from 'react-hot-toast';
-import api from '../../utils/axios';
-import { useTimezone } from '../context/TimezoneContext';
+import React, { useState } from 'react'
+import { Head, Link, router } from '@inertiajs/react'
+import toast from 'react-hot-toast'
+import {
+  AlertCircle, Clock, Hash, LifeBuoy, Mail, Plus, Search,
+} from 'lucide-react'
+import api from '../../utils/axios'
+import PortalShell from '../components/portal/PortalShell'
+import PortalTicketView from '../components/portal/PortalTicketView'
+import {
+  BTN_PRIMARY, BTN_SECONDARY, PORTAL_CARD, PORTAL_INPUT, PortalHero,
+  PortalStatusBadge,
+} from '../components/portal/PortalUI'
 
-const THEME = {
-  primary: '#4a154b',
-  gradient: 'linear-gradient(135deg, #4a154b 0%, #165c66 100%)',
-};
+const FIELD_LABEL = 'block text-xs font-medium text-gray-600 mb-1.5'
 
-const STATUS_COLORS = {
-  new: 'bg-indigo-100 text-indigo-800',
-  open: 'bg-blue-100 text-blue-800',
-  in_progress: 'bg-purple-100 text-purple-800',
-  pending: 'bg-yellow-100 text-yellow-800',
-  resolved: 'bg-green-100 text-green-800',
-  closed: 'bg-gray-100 text-gray-800',
-};
+const STATUS_GUIDE = [
+  { status: 'new', text: 'Just submitted and waiting for review.' },
+  { status: 'in_progress', text: 'Our team is actively working on it.' },
+  { status: 'pending', text: 'We are waiting on a response from you.' },
+  { status: 'resolved', text: 'The issue has been resolved.' },
+]
 
-const PRIORITY_COLORS = {
-  low: 'bg-gray-100 text-gray-800',
-  normal: 'bg-blue-100 text-blue-800',
-  high: 'bg-orange-100 text-orange-800',
-  urgent: 'bg-red-100 text-red-800',
-};
-
-export default function PortalTrackTicket({ ticket, comments, activity_logs, search, tenant_name }) {
-  const [ticketNumber, setTicketNumber] = useState(search.ticket_number || '');
-  const [email, setEmail] = useState(search.email || '');
-  const [newComment, setNewComment] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [localComments, setLocalComments] = useState(comments || []);
-  const [activeTab, setActiveTab] = useState('comments');
-  const { formatDateTime, formatShortDateTime } = useTimezone();
+export default function PortalTrackTicket({ ticket, comments = [], activity_logs = [], search = {}, tenant_name }) {
+  const [ticketNumber, setTicketNumber] = useState(search.ticket_number || '')
+  const [email, setEmail] = useState(search.email || '')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [localComments, setLocalComments] = useState(comments || [])
 
   const handleSearch = (e) => {
-    e.preventDefault();
-    router.get('/portal/track-ticket/', {
-      ticket_number: ticketNumber,
-      email: email,
-    });
-  };
+    e.preventDefault()
+    router.get('/portal/track-ticket/', { ticket_number: ticketNumber, email })
+  }
 
-  const handleAddComment = async (e) => {
-    e.preventDefault();
-    
-    if (!newComment.trim()) {
-      toast.error('Please enter a comment');
-      return;
-    }
-
-    if (isSubmitting) return;
-    
-    setIsSubmitting(true);
+  const handleAddComment = async (message) => {
+    if (isSubmitting) return false
+    setIsSubmitting(true)
 
     try {
       const response = await api.post('/portal/add-comment/', {
         ticket_number: ticket.ticket_number,
         email: search.email,
-        message: newComment,
-      });
+        message,
+      })
 
-      const data = response.data;
-
-      if (data.success) {
-        toast.success('Comment added successfully');
-        setNewComment('');
-        setLocalComments([...localComments, data.comment]);
-      } else {
-        toast.error(data.message || 'Failed to add comment');
+      if (response.data.success) {
+        toast.success('Reply sent')
+        setLocalComments((prev) => [...prev, response.data.comment])
+        return true
       }
+
+      toast.error(response.data.message || 'Failed to add reply')
+      return false
     } catch (error) {
-      console.error('Error adding comment:', error);
-      toast.error('Failed to add comment. Please try again.');
+      console.error('Error adding comment:', error)
+      toast.error('Failed to add reply. Please try again.')
+      return false
     } finally {
-      setIsSubmitting(false);
+      setIsSubmitting(false)
     }
-  };
+  }
 
-  const formatDate = (dateString) => {
-    return formatDateTime(dateString);
-  };
-
-  const formatShortDate = (dateString) => {
-    return formatShortDateTime(dateString);
-  };
+  const notFound = search.ticket_number && search.email && !ticket
 
   return (
     <>
-      <Head title={ticket ? `Ticket ${ticket.ticket_number}` : "Track Ticket"} />
-      
-      <div className="min-h-screen bg-gray-50">
-        {/* Header - Themed App Bar */}
-        <header className="shadow-sm" style={{ background: THEME.primary }}>
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="flex items-center justify-between">
-              <Link href="/portal/" className="text-2xl font-bold text-white">
-                {tenant_name || 'Customer Portal'}
-              </Link>
-              <Link
-                href="/portal/"
-                className="text-sm text-white hover:text-gray-200 transition-all"
-              >
-                ← Back to Home
-              </Link>
-            </div>
-          </div>
-        </header>
+      <Head title={ticket ? `Ticket ${ticket.ticket_number}` : 'Track ticket'} />
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {!ticket && (
-            <>
-              {/* Page Title */}
-              <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2" style={{ color: THEME.primary }}>
-                  Track Your Ticket
-                </h1>
-                <p className="text-gray-600">
-                  Enter your ticket number and email address to view the status and updates
-                </p>
+      <PortalShell tenantName={tenant_name}>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-4">
+          {ticket ? (
+            <PortalTicketView
+              ticket={ticket}
+              comments={localComments}
+              activity_logs={activity_logs}
+              backHref="/portal/"
+              backLabel="Back to portal"
+              onSubmitComment={handleAddComment}
+              submitting={isSubmitting}
+            >
+              <div className="portal-tint rounded-2xl border p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900">Need more help?</h2>
+                  <p className="mt-0.5 text-xs text-gray-600">
+                    Reply above or browse our knowledge base for immediate answers.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Link href="/portal/kb/" className={BTN_SECONDARY}>Browse articles</Link>
+                  <Link href="/portal/create-ticket/" className={BTN_PRIMARY}>
+                    <Plus className="w-4 h-4" /> New ticket
+                  </Link>
+                </div>
               </div>
+            </PortalTicketView>
+          ) : (
+            <>
+              <PortalHero
+                compact
+                eyebrow="Ticket tracking"
+                title="Track your ticket"
+                description="Enter your ticket number and the email address you used to create it."
+              />
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Main Search Form */}
+              <div className="mt-5 grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
                 <div className="lg:col-span-2">
-                  <div className="p-6 mb-8">
-                    <h2 className="text-xl font-bold mb-4" style={{ color: THEME.primary }}>
-                      Find Your Ticket
-                    </h2>
-                    <form onSubmit={handleSearch} className="space-y-4">
+                  <form onSubmit={handleSearch} className={`${PORTAL_CARD} p-5 sm:p-6 animate-portalRise`}>
+                    <div className="space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Ticket Number <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={ticketNumber}
-                          onChange={(e) => setTicketNumber(e.target.value)}
-                          placeholder="e.g., INC04E5B"
-                          required
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
-                          style={{ focusRingColor: THEME.primary }}
-                        />
+                        <label className={FIELD_LABEL} htmlFor="ticket-number">Ticket number <span className="text-red-500">*</span></label>
+                        <div className="relative">
+                          <Hash className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            id="ticket-number"
+                            type="text"
+                            value={ticketNumber}
+                            onChange={(e) => setTicketNumber(e.target.value.toUpperCase())}
+                            placeholder="e.g. INC04E5B"
+                            required
+                            className={`${PORTAL_INPUT} pl-9`}
+                          />
+                        </div>
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Email Address <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="your@email.com"
-                          required
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2"
-                          style={{ focusRingColor: THEME.primary }}
-                        />
+                        <label className={FIELD_LABEL} htmlFor="ticket-email">Email address <span className="text-red-500">*</span></label>
+                        <div className="relative">
+                          <Mail className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            id="ticket-email"
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="you@example.com"
+                            required
+                            className={`${PORTAL_INPUT} pl-9`}
+                          />
+                        </div>
                       </div>
 
-                      <button
-                        type="submit"
-                        className="w-full py-3 text-white rounded-lg font-medium transition-all hover:opacity-90"
-                        style={{ background: THEME.primary }}
-                      >
-                        🔍 Track Ticket
+                      <button type="submit" className={`${BTN_PRIMARY} w-full`}>
+                        <Search className="w-4 h-4" /> Track ticket
                       </button>
-                    </form>
-                  </div>
+                    </div>
+                  </form>
 
-                  {search.ticket_number && search.email && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center mt-6">
-                      <div className="text-4xl mb-4">⚠️</div>
-                      <h3 className="text-lg font-semibold mb-2" style={{ color: THEME.primary }}>
-                        Ticket Not Found
-                      </h3>
-                      <p className="text-sm text-gray-600">
-                        We couldn't find a ticket matching the provided information. 
-                        Please check your ticket number and email address and try again.
-                      </p>
+                  {notFound && (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 animate-portalRise">
+                      <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h2 className="text-sm font-semibold text-amber-900">Ticket not found</h2>
+                        <p className="mt-0.5 text-sm text-amber-700">
+                          We could not find a ticket matching that number and email. Check both values and try again.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Sidebar with helpful info */}
-                <div className="space-y-6">
-                  {/* Status Guide */}
-                  <div className="bg-white -sm border border-gray-200 p-6">
-                    <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
-                      📊 Ticket Status Guide
-                    </h3>
-                    <div className="space-y-3 text-sm">
-                      <div className="flex items-start gap-2">
-                        <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">New</span>
-                        <p className="text-gray-600 flex-1">Just submitted, awaiting review</p>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs font-medium">In Progress</span>
-                        <p className="text-gray-600 flex-1">Being worked on by our team</p>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs font-medium">Pending</span>
-                        <p className="text-gray-600 flex-1">Waiting for your response</p>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs font-medium">Resolved</span>
-                        <p className="text-gray-600 flex-1">Issue has been resolved</p>
-                      </div>
-                    </div>
+                <div className="space-y-4">
+                  <div className={`${PORTAL_CARD} p-5`}>
+                    <h2 className="text-sm font-semibold text-gray-900 mb-3">What the statuses mean</h2>
+                    <ul className="space-y-2.5">
+                      {STATUS_GUIDE.map(({ status, text }) => (
+                        <li key={status} className="flex items-start gap-2">
+                          <span className="flex-shrink-0 mt-0.5"><PortalStatusBadge status={status} /></span>
+                          <span className="text-xs text-gray-600 leading-relaxed">{text}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
 
-                  {/* Help Card */}
-                  <div className="-sm border-2 p-6" style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', borderColor: THEME.primary }}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-2xl">💡</span>
-                      <h3 className="text-lg font-semibold" style={{ color: THEME.primary }}>
-                        Need Help?
-                      </h3>
+                  <div className="portal-tint rounded-2xl border p-5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <LifeBuoy className="w-4 h-4 text-[#0B3D26]" />
+                      <h2 className="text-sm font-semibold text-gray-900">Where is my number?</h2>
                     </div>
-                    <p className="text-sm text-gray-700 mb-4">
-                      Your ticket number was sent to your email when you created the ticket. Check your inbox or spam folder.
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Your ticket number was included in the confirmation email we sent when you created the request. Check your inbox or spam folder.
                     </p>
-                    <Link
-                      href="/portal/create-ticket/"
-                      className="block w-full py-2 text-center border-2 rounded-lg hover:bg-white transition-all text-sm font-medium"
-                      style={{ borderColor: THEME.primary, color: THEME.primary }}
-                    >
-                      Submit New Ticket
+                    <Link href="/portal/create-ticket/" className={`${BTN_SECONDARY} mt-3 w-full`}>
+                      <Plus className="w-4 h-4" /> Submit a new ticket
                     </Link>
                   </div>
 
-                  {/* Contact Info */}
-                  <div className="bg-white -sm border border-gray-200 p-6">
-                    <h3 className="text-lg font-semibold mb-4" style={{ color: THEME.primary }}>
-                      📞 Other Ways to Reach Us
-                    </h3>
-                    <div className="space-y-3 text-sm">
-                      <div>
-                        <p className="font-medium text-gray-700">Email Support</p>
-                        <p className="text-gray-600">support@imaradesk.com</p>
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-700">Business Hours</p>
-                        <p className="text-gray-600">Mon-Fri: 9AM - 6PM</p>
-                      </div>
+                  <div className={`${PORTAL_CARD} p-5`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Clock className="w-4 h-4 text-gray-400" />
+                      <h2 className="text-sm font-semibold text-gray-900">Business hours</h2>
                     </div>
+                    <p className="text-xs text-gray-600">Monday – Friday<br />9:00 AM – 6:00 PM</p>
                   </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {ticket && (
-            <>
-              {/* Ticket Header */}
-              <div className="bg-white -sm border border-gray-200 mb-6">
-                <div className="p-6 border-b border-gray-200">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h1 className="text-2xl font-bold" style={{ color: THEME.primary }}>
-                          {ticket.subject}
-                        </h1>
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[ticket.status]}`}>
-                          {ticket.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        Ticket #{ticket.ticket_number}
-                      </p>
-                    </div>
-                    <span className={`px-4 py-2 rounded-lg text-sm font-medium ${PRIORITY_COLORS[ticket.priority]}`}>
-                      {ticket.priority.charAt(0).toUpperCase() + ticket.priority.slice(1)} Priority
-                    </span>
-                  </div>
-
-                  {/* Ticket Info Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6 pt-6 border-t border-gray-200">
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Created</p>
-                      <p className="text-sm font-medium text-gray-900">{formatDate(ticket.created_at)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Last Updated</p>
-                      <p className="text-sm font-medium text-gray-900">{formatDate(ticket.updated_at)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 mb-1">Status</p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {ticket.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Description */}
-                <div className="p-6">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Description</h3>
-                  <div 
-                    className="text-sm text-gray-600 bg-gray-50 p-4 rounded-lg border border-gray-200 prose prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: ticket.description }}
-                  />
-                </div>
-              </div>
-
-              {/* Tabs */}
-              <div className="bg-white -sm border border-gray-200">
-                <div className="border-b border-gray-200">
-                  <nav className="flex -mb-px">
-                    <button
-                      onClick={() => setActiveTab('comments')}
-                      className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
-                        activeTab === 'comments'
-                          ? 'border-current text-gray-900'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                      style={activeTab === 'comments' ? { borderColor: THEME.primary, color: THEME.primary } : {}}
-                    >
-                      Comments ({localComments.length})
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('activity')}
-                      className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
-                        activeTab === 'activity'
-                          ? 'border-current text-gray-900'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                      }`}
-                      style={activeTab === 'activity' ? { borderColor: THEME.primary, color: THEME.primary } : {}}
-                    >
-                      Activity ({activity_logs?.length || 0})
-                    </button>
-                  </nav>
-                </div>
-
-                <div className="p-6">
-                  {activeTab === 'comments' && (
-                    <div>
-                      {/* Comments List */}
-                      {localComments.length > 0 ? (
-                        <div className="space-y-6 mb-8">
-                          {localComments.map((comment) => (
-                            <div
-                              key={comment.id}
-                              className={`relative pl-6 pb-6 border-l-2 last:pb-0 ${
-                                comment.is_guest ? 'border-gray-300' : ''
-                              }`}
-                              style={!comment.is_guest ? { borderColor: THEME.primary } : {}}
-                            >
-                              <div className="absolute left-[-9px] top-0 w-4 h-4 rounded-full bg-white border-2"
-                                   style={comment.is_guest ? { borderColor: '#d1d5db' } : { borderColor: THEME.primary }}
-                              />
-                              <div className="bg-white rounded-lg">
-                                <div className="flex items-center justify-between mb-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm" style={!comment.is_guest ? { color: THEME.primary } : {}}>
-                                      {comment.author}
-                                    </span>
-                                    {comment.is_guest ? (
-                                      <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded">You</span>
-                                    ) : (
-                                      <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">Support Team</span>
-                                    )}
-                                  </div>
-                                  <span className="text-xs text-gray-500">{formatShortDate(comment.created_at)}</span>
-                                </div>
-                                <div className="text-sm text-gray-700 whitespace-pre-wrap">{comment.message}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
-                          <p className="text-sm">No comments yet</p>
-                        </div>
-                      )}
-
-                      {/* Add Comment Form */}
-                      <div className="border-t border-gray-200 pt-6">
-                        <h4 className="text-sm font-semibold mb-3 text-gray-700">Add a Comment</h4>
-                        <form onSubmit={handleAddComment}>
-                          <textarea
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Type your message here..."
-                            rows="4"
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 resize-none"
-                            style={{ focusRingColor: THEME.primary }}
-                            disabled={isSubmitting}
-                          />
-                          <div className="flex justify-end mt-3">
-                            <button
-                              type="submit"
-                              disabled={isSubmitting || !newComment.trim()}
-                              className="px-6 py-2 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                              style={{ background: THEME.primary }}
-                            >
-                              {isSubmitting ? 'Posting...' : 'Post Comment'}
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeTab === 'activity' && (
-                    <div>
-                      {activity_logs && activity_logs.length > 0 ? (
-                        <div className="space-y-4">
-                          {activity_logs.map((activity) => (
-                            <div key={activity.id} className="flex items-start gap-4 pb-4 border-b border-gray-100 last:border-0">
-                              <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: `${THEME.primary}20` }}>
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: THEME.primary }} />
-                              </div>
-                              <div className="flex-1 min-w-0 pt-1">
-                                <p className="text-sm text-gray-700">{activity.description}</p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-xs text-gray-500">{activity.actor}</span>
-                                  <span className="text-xs text-gray-400">•</span>
-                                  <span className="text-xs text-gray-500">{formatShortDate(activity.created_at)}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-center py-12 text-gray-500">
-                          <svg className="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                          </svg>
-                          <p className="text-sm">No activity yet</p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Help Section */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-6">
-                <h3 className="text-lg font-semibold mb-2" style={{ color: THEME.primary }}>
-                  Need More Help?
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  If you have additional questions or need to provide more information, feel free to add comments above or browse our knowledge base.
-                </p>
-                <div className="flex gap-3">
-                  <Link
-                    href="/portal/"
-                    className="inline-block px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg transition-all hover:bg-gray-50"
-                  >
-                    Browse Knowledge Base
-                  </Link>
-                  <Link
-                    href="/portal/create-ticket/"
-                    className="inline-block px-4 py-2 text-white rounded-lg transition-all"
-                    style={{ background: THEME.primary }}
-                  >
-                    Create New Ticket
-                  </Link>
                 </div>
               </div>
             </>
           )}
         </div>
-      </div>
+      </PortalShell>
     </>
-  );
+  )
 }

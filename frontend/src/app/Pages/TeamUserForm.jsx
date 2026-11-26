@@ -1,31 +1,24 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { Head, useForm, Link, router } from '@inertiajs/react'
+import { useDirtyState, useUnsavedChanges } from '../context/UnsavedChangesContext'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
-import SettingsSidenav from '../components/SettingsSidenav'
+import { SettingsHeading } from '../components/settings/SettingsPage'
 import Select from '../components/SearchableSelect'
 import { THEME } from '../constants/theme'
 
-export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles = [], groups = [], errors: serverErrors = {} }) {
-  const [sidenavOpen, setSidenavOpen] = useState(true)
+export default function TeamUserForm({ organization = null, roles = [], groups = [], errors: serverErrors = {} }) {
   const [currentStep, setCurrentStep] = useState(1)
-  
-  const { data, setData, post, processing, errors } = useForm({
-    username: user.username || '',
-    email: user.email || '',
-    password: '',
-    full_name: user.full_name || '',
-    organization: user.organization || '',
-    role: user.role || '',
-    groups: Array.isArray(user.groups) ? user.groups : [],
-  })
 
-  // Debug: Log the groups to console
-  useEffect(() => {
-    console.log('User groups (raw):', user.groups)
-    console.log('Data groups:', data.groups)
-    console.log('Groups available:', groups.map(g => ({ id: g.id, name: g.name })))
-  }, [user.groups, data.groups, groups])
+  const { data, setData, post, processing, errors } = useForm({
+    email: '',
+    full_name: '',
+    role: '',
+    groups: [],
+  })
+  const dirty = useDirtyState(data)
+  const { allowNextNavigation } = useUnsavedChanges(dirty)
+
 
   const toggleGroup = (groupId) => {
     const current = data.groups || []
@@ -41,31 +34,27 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    const url = mode === 'add' ? '/settings/team/users/add/' : `/settings/team/users/${user.id}/edit/`
-    const successMsg = mode === 'add' ? 'User created successfully!' : 'User updated successfully!'
-    
-    // Debug: Log what's being sent
-    console.log('Submitting groups:', data.groups)
-    
+
     toast.promise(
       new Promise((resolve, reject) => {
-        post(url, {
+        post('/administration/team/users/add/', {
           headers: {
             'X-CSRFToken': window.csrfToken,
           },
           forceFormData: true,
           preserveScroll: true,
           onSuccess: () => {
-            router.visit('/settings/team/users/')
+            allowNextNavigation()
+            router.visit('/administration/team/users/')
             resolve()
           },
-          onError: () => reject(),
+          onError: (errs) => reject(errs),
         })
       }),
       {
-        loading: mode === 'add' ? 'Creating user...' : 'Updating user...',
-        success: successMsg,
-        error: 'Operation failed',
+        loading: 'Creating user...',
+        success: 'User created successfully!',
+        error: (errs) => errs?.limit || 'Operation failed',
       }
     )
   }
@@ -77,10 +66,6 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
     if (currentStep === 1) {
       if (!data.full_name || !data.email) {
         toast.error('Please fill in all required fields')
-        return false
-      }
-      if (mode === 'add' && !data.password) {
-        toast.error('Password is required')
         return false
       }
       setCurrentStep(2)
@@ -102,33 +87,21 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
 
   return (
     <>
-      <Head title={mode === 'add' ? 'Add User' : 'Edit User'} />
-      <AppShell active="settings">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          {sidenavOpen && <SettingsSidenav activeSection="team-users" />}
+      <Head title="Add User" />
+      <AppShell active="settings" fixedHeight>
+        <div className="flex flex-1 min-h-0 overflow-hidden">
 
-          <main className="flex-1 bg-gray-50">
-            <div className=" border-b border-gray-200 px-6 py-4 flex items-center gap-3">
-              {!sidenavOpen && (
-                <button
-                  className="p-2 rounded-md hover:bg-gray-100"
-                  title="Show Settings Menu"
-                  onClick={() => setSidenavOpen(true)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500">
-                    <path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/>
-                  </svg>
-                </button>
-              )}
-              <h1 className="text-xl font-semibold text-gray-800">
-                {mode === 'add' ? 'Add User' : 'Edit User'}
-              </h1>
+          <main className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
+            <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 flex flex-wrap items-center gap-3 justify-between">
+              <SettingsHeading section="team-users">
+                Add User
+              </SettingsHeading>
             </div>
 
-            <div className="flex gap-0">
+            <div className="flex gap-0 max-w-6xl mx-auto w-full">
               {/* Vertical Step Indicators */}
               <div className="w-64 flex-shrink-0  border-r border-gray-200 p-6">
-                <div className="sticky top-6">
+                <div className="sticky top-24">
                     <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-6">Steps</h3>
                     <div className="space-y-4">
                       {/* Step 1 */}
@@ -207,50 +180,21 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
                           {allErrors?.email && <p className="mt-1 text-sm text-red-600">{allErrors.email}</p>}
                         </div>
 
-                        {mode === 'add' && (
-                          <>
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Username*</label>
-                              <input
-                                type="text"
-                                value={data.username}
-                                onChange={(e) => setData('username', e.target.value)}
-                                className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                                  allErrors?.username ? 'border-red-500' : 'border-gray-300'
-                                }`}
-                                placeholder="username"
-                              />
-                              {allErrors?.username && <p className="mt-1 text-sm text-red-600">{allErrors.username}</p>}
-                            </div>
-
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700 mb-2">Password*</label>
-                              <input
-                                type="password"
-                                value={data.password}
-                                onChange={(e) => setData('password', e.target.value)}
-                                className={`w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                                  allErrors?.password ? 'border-red-500' : 'border-gray-300'
-                                }`}
-                                placeholder="Enter password"
-                              />
-                              {allErrors?.password && <p className="mt-1 text-sm text-red-600">{allErrors.password}</p>}
-                            </div>
-                          </>
-                        )}
-
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
-                          <Select
-                            value={data.organization}
-                            onChange={(value) => setData('organization', value)}
-                            options={orgs}
-                            placeholder="Select organization"
-                            displayKey="name"
-                            valueKey="id"
-                            searchable={true}
-                            allowClear={true}
+                          <input
+                            type="text"
+                            value={organization?.name || 'Default Organization'}
+                            disabled
+                            className="w-full px-3 py-2 border rounded-md bg-gray-100 text-gray-600 border-gray-300 cursor-not-allowed"
                           />
+                          <p className="mt-1 text-xs text-gray-500">User will be added to your organization</p>
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <p className="text-sm text-blue-700">
+                            <span className="font-medium">Note:</span> A secure password will be auto-generated and sent to the user's email.
+                          </p>
                         </div>
 
 
@@ -320,7 +264,7 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
                       </div>
                       <div className="flex items-center gap-3">
                         <Link
-                          href="/settings/team/users/"
+                          href="/administration/team/users/"
                           className={`px-4 py-2 rounded-md ${THEME.button.secondary}`}
                         >
                           Cancel
@@ -339,7 +283,7 @@ export default function TeamUserForm({ mode = 'add', user = {}, orgs = [], roles
                             disabled={processing}
                             className={`px-4 py-2 rounded-md ${THEME.button.primary} disabled:opacity-50 disabled:cursor-not-allowed`}
                           >
-                            {mode === 'add' ? 'Create User' : 'Update User'}
+                            Create User
                           </button>
                         )}
                       </div>

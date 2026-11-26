@@ -3,6 +3,7 @@ Knowledge Base views - KB articles, categories, and approvals
 """
 import json
 from django.shortcuts import redirect
+from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.core.paginator import Paginator
@@ -14,124 +15,19 @@ from shared.decorators import require_app
 
 
 def get_kb_sidebar(request, current_view='all'):
-    """Generate sidebar data for KB views."""
-    all_count = KBArticle.objects.count()
-    pending_count = KBArticle.objects.filter(status='pending').count()
-    published_count = KBArticle.objects.filter(status='published').count()
-    draft_count = KBArticle.objects.filter(status='draft').count()
-    rejected_count = KBArticle.objects.filter(status='rejected').count()
-    my_articles_count = KBArticle.objects.filter(created_by=request.user).count()
-
-    return {
-        'views': [
-            {'id': 'all', 'label': 'All Articles', 'count': all_count, 'active': current_view == 'all'},
-            {'id': 'published', 'label': 'Published', 'count': published_count, 'active': current_view == 'published'},
-            {'id': 'pending', 'label': 'Pending Approval', 'count': pending_count, 'active': current_view == 'pending'},
-            {'id': 'draft', 'label': 'Drafts', 'count': draft_count, 'active': current_view == 'draft'},
-            {'id': 'rejected', 'label': 'Rejected', 'count': rejected_count, 'active': current_view == 'rejected'},
-            {'id': 'my_articles', 'label': 'Created by Me', 'count': my_articles_count, 'active': current_view == 'my_articles'},
-        ]
-    }, pending_count
+    """Shared KB workspace sidebar (see modules.kb.views.get_kb_sidebar)."""
+    from modules.kb.views import get_kb_sidebar as kb_sidebar
+    return kb_sidebar(request)
 
 
 @require_app('knowledge-base')
 @login_required
-@inertia('KnowledgeBase')
 def knowledgebase(request):
-    """Knowledge base page."""
-    # Get view filter
-    view = request.GET.get('view', 'all')
-
-    # Get all categories with article count
-    categories = KBCategory.objects.all()
-    categories_data = []
-    for category in categories:
-        article_count = KBArticle.objects.filter(category=category).count()
-        categories_data.append({
-            'id': category.id,
-            'name': category.name,
-            'description': category.description,
-            'icon': category.icon,
-            'count': article_count,
-        })
-
-    # Base queryset
-    articles_qs = KBArticle.objects.all().select_related('category', 'created_by')
-
-    # Apply view filter
-    if view == 'published':
-        articles_qs = articles_qs.filter(status='published')
-    elif view == 'pending':
-        articles_qs = articles_qs.filter(status='pending')
-    elif view == 'draft':
-        articles_qs = articles_qs.filter(status='draft')
-    elif view == 'rejected':
-        articles_qs = articles_qs.filter(status='rejected')
-    elif view == 'my_articles':
-        articles_qs = articles_qs.filter(created_by=request.user)
-
-    articles_qs = articles_qs.order_by('-created_at')
-
-    articles_data = []
-    for article in articles_qs:
-        articles_data.append({
-            'id': article.id,
-            'title': article.title,
-            'summary': article.summary,
-            'category': article.category.name if article.category else 'Uncategorized',
-            'categoryId': article.category.id if article.category else None,
-            'views': article.views,
-            'status': article.status,
-            'featured': article.featured,
-            'created_at': article.created_at.isoformat(),
-            'updated_at': article.updated_at.strftime('%b %d, %Y') if article.updated_at else None,
-            'author': article.created_by.get_full_name() if article.created_by else 'Unknown',
-        })
-
-    sidebar, pending_count = get_kb_sidebar(request, view)
-
-    # Stats for dashboard
-    total_articles = KBArticle.objects.count()
-    published_articles = KBArticle.objects.filter(status='published').count()
-    total_views = KBArticle.objects.aggregate(total=models.Sum('views'))['total'] or 0
-    total_categories = KBCategory.objects.count()
-
-    # Top articles by views (for chart)
-    top_articles = KBArticle.objects.filter(status='published').order_by('-views')[:5]
-    top_articles_data = [
-        {'id': a.id, 'title': a.title[:30] + ('...' if len(a.title) > 30 else ''), 'views': a.views}
-        for a in top_articles
-    ]
-
-    # Recent/featured articles
-    featured_articles = KBArticle.objects.filter(status='published').order_by('-views', '-created_at')[:6]
-    featured_data = []
-    for article in featured_articles:
-        featured_data.append({
-            'id': article.id,
-            'title': article.title,
-            'summary': article.summary[:120] + '...' if article.summary and len(article.summary) > 120 else article.summary,
-            'category': article.category.name if article.category else 'Uncategorized',
-            'views': article.views,
-            'author': article.created_by.get_full_name() if article.created_by else 'Unknown',
-            'updated_at': article.updated_at.strftime('%b %d, %Y') if article.updated_at else None,
-        })
-
-    return {
-        'categories': categories_data,
-        'articles': articles_data,
-        'currentView': view,
-        'sidebar': sidebar,
-        'pendingCount': pending_count,
-        'stats': {
-            'totalArticles': total_articles,
-            'publishedArticles': published_articles,
-            'totalViews': total_views,
-            'totalCategories': total_categories,
-        },
-        'topArticles': top_articles_data,
-        'featuredArticles': featured_data,
-    }
+    """The KB has no overview page any more; /knowledgebase/ lands on All articles."""
+    url = reverse('kb_articles_list')
+    if request.GET:
+        url = f"{url}?{request.GET.urlencode()}"
+    return redirect(url)
 
 
 @require_app('knowledge-base')
@@ -148,12 +44,28 @@ def kb_articles_list(request):
         'published': 'Published Articles',
         'pending': 'Pending Articles',
         'draft': 'Draft Articles',
+        'archived': 'Archived Articles',
         'rejected': 'Rejected Articles',
         'my_articles': 'My Articles',
     }
 
     # Base queryset
     articles_qs = KBArticle.objects.all().select_related('category', 'created_by')
+
+    # Category filter (from the sidebar / overview) takes precedence over the view
+    current_category = None
+    category_id = request.GET.get('category')
+    if category_id and category_id.isdigit():
+        current_category = KBCategory.objects.filter(id=category_id).first()
+    if current_category:
+        # Categories have their own page now; keep any other params (e.g. ?new=1)
+        params = request.GET.copy()
+        params.pop('category')
+        url = reverse('kb_category_view_tab', args=[current_category.id, 'articles'])
+        return redirect(f"{url}?{params.urlencode()}" if params else url)
+    if current_category:
+        articles_qs = articles_qs.filter(category=current_category)
+        view = 'all'
 
     # Apply view filter
     if view == 'published':
@@ -162,6 +74,8 @@ def kb_articles_list(request):
         articles_qs = articles_qs.filter(status='pending')
     elif view == 'draft':
         articles_qs = articles_qs.filter(status='draft')
+    elif view == 'archived':
+        articles_qs = articles_qs.filter(status='archived')
     elif view == 'rejected':
         articles_qs = articles_qs.filter(status='rejected')
     elif view == 'my_articles':
@@ -173,15 +87,18 @@ def kb_articles_list(request):
     for article in articles_qs:
         articles_data.append({
             'id': article.id,
+            'uuid': str(article.uuid),
             'title': article.title,
             'summary': article.summary,
             'category': article.category.name if article.category else 'Uncategorized',
+            'categoryId': article.category.id if article.category else None,
             'views': article.views,
             'status': article.status,
             'featured': article.featured,
             'author': article.created_by.get_full_name() if article.created_by else 'Unknown',
             'updated_at': article.updated_at.strftime('%b %d, %Y') if article.updated_at else None,
             'created_at': article.created_at.isoformat(),
+            'display_image': article.display_image or '',
         })
 
     sidebar, pending_count = get_kb_sidebar(request, view)
@@ -189,7 +106,13 @@ def kb_articles_list(request):
     return {
         'articles': articles_data,
         'currentView': view,
-        'viewTitle': view_titles.get(view, 'All Articles'),
+        'viewTitle': current_category.name if current_category else view_titles.get(view, 'All Articles'),
+        'currentCategory': {
+            'id': current_category.id,
+            'name': current_category.name,
+            'icon': current_category.icon,
+            'description': current_category.description,
+        } if current_category else None,
         'sidebar': sidebar,
         'pendingCount': pending_count,
     }
@@ -214,6 +137,7 @@ def kb_approvals(request):
     for article in page.object_list:
         articles.append({
             'id': article.id,
+            'uuid': str(article.uuid),
             'title': article.title,
             'summary': article.summary,
             'category': article.category.name if article.category else 'Uncategorized',
@@ -222,6 +146,7 @@ def kb_approvals(request):
             'created_at': article.created_at.isoformat(),
             'views': article.views,
             'status': article.status,
+            'display_image': article.display_image or '',
         })
 
     sidebar, pending_count = get_kb_sidebar(request, 'pending')

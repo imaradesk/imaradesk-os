@@ -3,8 +3,8 @@ import Avatar from './Avatar'
 
 // Theme colors
 const COLORS = {
-  primary: '#4a154b',
-  primaryLight: '#825084',
+  primary: '#0B3D26',
+  primaryLight: '#4F8A68',
   secondary: '#f3f4f6',
 }
 
@@ -115,7 +115,7 @@ export default function ActivityTimeline({ activities = [] }) {
         <h3 className="text-sm font-semibold text-gray-700">Activity</h3>
         <button
           onClick={allActivitiesCollapsed ? expandAllActivities : collapseAllActivities}
-          className="text-sm text-[#4a154b] hover:text-[#5a235c]"
+          className="text-sm text-[#0B3D26] hover:text-[#14502F]"
         >
           {allActivitiesCollapsed ? 'Expand All' : 'Collapse All'}
         </button>
@@ -123,7 +123,7 @@ export default function ActivityTimeline({ activities = [] }) {
 
       <div className="relative">
         {/* Vertical timeline line */}
-        <div className="absolute left-[11px] top-3 bottom-0 w-px bg-[#825084]/30" />
+        <div className="absolute left-[11px] top-3 bottom-0 w-px bg-[#4F8A68]/30" />
         
         <div className="space-y-4">
           {sortedActivities.map((activity) => {
@@ -136,7 +136,7 @@ export default function ActivityTimeline({ activities = [] }) {
                 {/* Timeline dot with icon */}
                 <div className={`relative z-10 flex-shrink-0 w-6 h-6 rounded-full border-2 bg-white flex items-center justify-center ${
                   isInternal ? 'border-amber-400 text-amber-400' :
-                  isStatusChange ? 'border-amber-400 text-amber-400' : 'border-[#825084] text-[#825084]'
+                  isStatusChange ? 'border-amber-400 text-amber-400' : 'border-[#4F8A68] text-[#4F8A68]'
                 }`}>
                   {getActivityIcon(activity.activity_type)}
                 </div>
@@ -163,11 +163,11 @@ export default function ActivityTimeline({ activities = [] }) {
                           </span>
                         )}
                       </button>
-                      <p className="text-xs text-[#825084] ml-6 mt-0.5">{activity.created_at}</p>
+                      <p className="text-xs text-[#4F8A68] ml-6 mt-0.5">{activity.created_at}</p>
                       
                       {/* Expandable message bubble */}
                       {expandedActivities[activity.id] && (
-                        <div className={`mt-2 ml-6 py-3 px-4 border-l-2 ${isInternal ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-[#825084]'}`}>
+                        <div className={`mt-2 ml-6 py-3 px-4 border-l-2 ${isInternal ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-[#4F8A68]'}`}>
                           <p className="text-sm text-gray-700 whitespace-pre-wrap">{activity.content || activity.message}</p>
                         </div>
                       )}
@@ -189,7 +189,7 @@ export default function ActivityTimeline({ activities = [] }) {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-[#825084] mt-0.5">{activity.created_at}</p>
+                      <p className="text-xs text-[#4F8A68] mt-0.5">{activity.created_at}</p>
                     </>
                   ) : (
                     <>
@@ -197,7 +197,7 @@ export default function ActivityTimeline({ activities = [] }) {
                         <span className="text-sm font-medium text-gray-900">{activity.actor?.name || 'System'}</span>
                         <span className="text-sm text-gray-500">{activity.description}</span>
                       </div>
-                      <p className="text-xs text-[#825084] mt-0.5">{activity.created_at}</p>
+                      <p className="text-xs text-[#4F8A68] mt-0.5">{activity.created_at}</p>
                     </>
                   )}
                 </div>

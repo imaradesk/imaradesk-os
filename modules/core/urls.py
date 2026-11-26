@@ -1,18 +1,28 @@
 from django.urls import path
 from . import views
 from . import kb_views
+from .notifications import notifications_feed
 
 urlpatterns = [
     path('', views.login_view, name='login'),
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
     path('onboarding/', views.onboarding, name='onboarding'),
+    path('forgot-password/', views.forgot_password, name='forgot_password'),
+    path('reset-password/<str:token>/', views.reset_password, name='reset_password'),
+    path('invite/<str:token>/', views.accept_invite, name='accept_invite'),
     path('2fa-verify/', views.two_factor_verify, name='two_factor_verify'),
     path('2fa-verify/send-code/', views.send_login_2fa_code, name='send_login_2fa_code'),
     path('2fa-verify/verify/', views.verify_login_2fa, name='verify_login_2fa'),
     path('dashboard/', views.index, name='index'),
     path('reports/', views.reports, name='reports'),
     path('reports/export/', views.export_reports, name='export_reports'),
+
+    path('api/notifications/', notifications_feed, name='notifications_feed'),
+
+    # Global Search API
+    path('api/search/', views.global_search, name='global_search'),
+    path('api/search/recently-viewed/', views.recently_viewed, name='recently_viewed'),
 
     # Knowledge Base
     path('knowledgebase/', kb_views.knowledgebase, name='knowledgebase'),

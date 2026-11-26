@@ -1,6 +1,8 @@
 """
 Tickets views - Ticket management functionality
 """
+from shared.utilities.organization import organization_name, site_url
+from django.utils.html import strip_tags
 import json
 import requests
 from datetime import datetime, timedelta, date
@@ -16,45 +18,56 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.core.cache import cache
 from django.conf import settings
-from django.db import connection
+from django.views.decorators.http import require_POST
 from inertia import inertia, render as inertia_render
 
 from modules.ticket.models import Ticket, TicketComment, TicketAttachment, ActivityStream, Department, WorkItem
 from modules.users.models import Group
-from shared.models import Client
+from shared.utilities.uploads import store_upload, UploadError
+
+import logging
+logger = logging.getLogger(__name__)
 
 
-def get_cached_views(tenant_schema):
-    """Get cached ticket views for a tenant."""
-    cache_key = f'ticket_views_{tenant_schema}'
-    cached_views = cache.get(cache_key)
-    
+def _agent_display_name(user, profile=None):
+    """Return the agent's real name, falling back to username (never email)."""
+    profile = profile or getattr(user, 'profile', None)
+    full_name = (getattr(profile, 'full_name', '') or '').strip()
+    if full_name:
+        return full_name
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return name or user.username
+
+
+VIEWS_CACHE_KEY = 'ticket_views'
+
+
+def get_cached_views():
+    """Get cached ticket views."""
+    cached_views = cache.get(VIEWS_CACHE_KEY)
+
     if cached_views is None:
         from modules.settings.models import SettingsView
         active_views = list(SettingsView.objects.filter(type='TICKET', is_active=True).order_by('order').values(
             'view_id', 'label', 'is_default', 'order'
         ))
-        cache.set(cache_key, active_views, getattr(settings, 'VIEWS_CACHE_TIMEOUT', 300))
+        cache.set(VIEWS_CACHE_KEY, active_views, getattr(settings, 'VIEWS_CACHE_TIMEOUT', 300))
         return active_views
-    
+
     return cached_views
 
 
-def invalidate_views_cache(tenant_schema):
-    """Invalidate the views cache for a tenant."""
-    cache_key = f'ticket_views_{tenant_schema}'
-    cache.delete(cache_key)
+def invalidate_views_cache():
+    """Invalidate the cached ticket views."""
+    cache.delete(VIEWS_CACHE_KEY)
 
 
 @login_required
 @inertia('Tickets')
 def tickets(request):
     """Tickets list page with real data from database."""
-    # Get tenant schema for cache key
-    tenant_schema = 'default'
-    
     # Load cached views
-    cached_views = get_cached_views(tenant_schema)
+    cached_views = get_cached_views()
     
     # Get default view: first check is_default, then fallback to first view (topmost in list)
     default_view = next((v for v in cached_views if v.get('is_default')), None)
@@ -82,88 +95,50 @@ def tickets(request):
     # Count drafts separately (for the Drafts view in sidebar)
     drafts_count = Ticket.objects.filter(status='draft').count()
 
-    # Calculate counts for different views
+    # One queryset per view. The sidebar counts and the list below both come from
+    # this map, so a view's badge always equals the number of rows it opens.
     unsolved_statuses = ['new', 'open', 'in_progress', 'pending']
-    your_unsolved = all_tickets.filter(
-        Q(assignee=request.user) | Q(requester=request.user),
-        status__in=unsolved_statuses
-    ).count()
-
-    unassigned = all_tickets.filter(assignee__isnull=True, status__in=unsolved_statuses).count()
-    all_unsolved = all_tickets.filter(status__in=unsolved_statuses).count()
-    all_tickets_count = all_tickets.count()
-
-    recently_updated_time = datetime.now() - timedelta(days=7)
-    recently_updated = all_tickets.filter(
-        updated_at__gte=recently_updated_time,
-        status__in=unsolved_statuses
-    ).count()
-
-    pending = all_tickets.filter(status='pending').count()
-    recently_solved = all_tickets.filter(status='resolved', updated_at__gte=recently_updated_time).count()
-
-    # New view counts
     now = timezone.now()
-    today = date.today()
+    today = timezone.localdate()
+    week_ago = now - timedelta(days=7)
 
-    # Response overdue - tickets where response_due_at is in the past
-    response_overdue_count = all_tickets.filter(
-        sla__response_due_at__lt=now,
-        status__in=unsolved_statuses
-    ).count()
+    try:
+        user_groups = list(request.user.profile.groups.values_list('id', flat=True))
+    except Exception:
+        user_groups = []
+    unsolved = all_tickets.filter(status__in=unsolved_statuses)
+    # SLA clocks stop once the agent replied, and pause while the ticket is on hold
+    running_sla = Q(sla__is_on_hold=False)
 
-    # Resolution due today
-    resolution_due_today_count = all_tickets.filter(
-        sla__resolution_due_at__date=today,
-        status__in=unsolved_statuses
-    ).count()
-
-    # My resolution overdue - assigned to me and resolution_due_at is in the past
-    my_resolution_overdue_count = all_tickets.filter(
-        assignee=request.user,
-        sla__resolution_due_at__lt=now,
-        status__in=unsolved_statuses
-    ).count()
-
-    # Requested by me
-    requested_by_me_count = all_tickets.filter(requester=request.user).count()
-
-    # Tickets I'm watching - using watchers field if exists
-    watching_count = all_tickets.filter(watchers=request.user).count() if hasattr(Ticket, 'watchers') else 0
+    view_querysets = {
+        'all_tickets': all_tickets,
+        'unsolved': unsolved.filter(Q(assignee=request.user) | Q(requester=request.user)),
+        'response_overdue': unsolved.filter(
+            running_sla, sla__response_due_at__lt=now, sla__first_responded_at__isnull=True,
+        ),
+        'resolution_due_today': unsolved.filter(
+            running_sla, sla__resolution_due_at__date=today,
+        ),
+        'my_resolution_overdue': unsolved.filter(
+            running_sla, assignee=request.user, sla__resolution_due_at__lt=now,
+        ),
+        'requested_by_me': all_tickets.filter(requester=request.user),
+        'watching': all_tickets.filter(watchers=request.user),
+        'unassigned': unsolved.filter(assignee__isnull=True),
+        'all_unsolved': unsolved,
+        'recently_updated': unsolved.filter(updated_at__gte=week_ago),
+        'new_in_groups': all_tickets.filter(status='new', group__in=user_groups),
+        'pending': all_tickets.filter(status='pending'),
+        'recently_solved': all_tickets.filter(status__in=['resolved', 'closed'], resolved_at__gte=week_ago),
+        'unsolved_in_groups': unsolved.filter(group__in=user_groups),
+    }
 
     # Get tickets based on selected view
     if view_id == 'drafts':
-        # For drafts view, show only draft tickets
         tickets_list = Ticket.objects.select_related('requester', 'assignee', 'sla', 'group', 'channel').filter(status='draft')
-    elif view_id == 'all_tickets':
-        tickets_list = all_tickets
-    elif view_id == 'response_overdue':
-        tickets_list = all_tickets.filter(sla__response_due_at__lt=now, status__in=unsolved_statuses)
-    elif view_id == 'resolution_due_today':
-        tickets_list = all_tickets.filter(sla__resolution_due_at__date=today, status__in=unsolved_statuses)
-    elif view_id == 'my_resolution_overdue':
-        tickets_list = all_tickets.filter(assignee=request.user, sla__resolution_due_at__lt=now, status__in=unsolved_statuses)
-    elif view_id == 'requested_by_me':
-        tickets_list = all_tickets.filter(requester=request.user)
-    elif view_id == 'watching':
-        tickets_list = all_tickets.filter(watchers=request.user) if hasattr(Ticket, 'watchers') else all_tickets.none()
-    elif view_id == 'unassigned':
-        tickets_list = all_tickets.filter(assignee__isnull=True, status__in=unsolved_statuses)
-    elif view_id == 'all_unsolved':
-        tickets_list = all_tickets.filter(status__in=unsolved_statuses)
-    elif view_id == 'recently_updated':
-        tickets_list = all_tickets.filter(updated_at__gte=recently_updated_time, status__in=unsolved_statuses)
-    elif view_id == 'pending':
-        tickets_list = all_tickets.filter(status='pending')
-    elif view_id == 'recently_solved':
-        tickets_list = all_tickets.filter(status='resolved', updated_at__gte=recently_updated_time)
-    elif view_id == 'unsolved_in_groups':
-        tickets_list = all_tickets.filter(status__in=unsolved_statuses)
-    else:  # unsolved (default)
-        tickets_list = all_tickets.filter(
-            Q(assignee=request.user) | Q(requester=request.user),
-            status__in=unsolved_statuses
-        )
+    else:
+        # Unknown ids fall back to "your unsolved tickets"
+        tickets_list = view_querysets.get(view_id, view_querysets['unsolved'])
 
     tickets_list = tickets_list.order_by('-updated_at')
     
@@ -273,37 +248,8 @@ def tickets(request):
     # Build views list with counts (using cached_views loaded at top)
     views_list = []
     for view in cached_views:
-        # Calculate count for each view
-        count = 0
-        view_id_check = view['view_id']
-        if view_id_check == 'all_tickets':
-            count = all_tickets_count
-        elif view_id_check == 'unsolved':
-            count = your_unsolved
-        elif view_id_check == 'response_overdue':
-            count = response_overdue_count
-        elif view_id_check == 'resolution_due_today':
-            count = resolution_due_today_count
-        elif view_id_check == 'my_resolution_overdue':
-            count = my_resolution_overdue_count
-        elif view_id_check == 'requested_by_me':
-            count = requested_by_me_count
-        elif view_id_check == 'watching':
-            count = watching_count
-        elif view_id_check == 'unassigned':
-            count = unassigned
-        elif view_id_check == 'all_unsolved':
-            count = all_unsolved
-        elif view_id_check == 'recently_updated':
-            count = recently_updated
-        elif view_id_check == 'new_in_groups':
-            count = 0  # TODO: Implement groups count
-        elif view_id_check == 'pending':
-            count = pending
-        elif view_id_check == 'recently_solved':
-            count = recently_solved
-        elif view_id_check == 'unsolved_in_groups':
-            count = all_unsolved  # TODO: Implement groups count
+        queryset = view_querysets.get(view['view_id'])
+        count = queryset.distinct().count() if queryset is not None else 0
 
         views_list.append({
             'id': view['view_id'],
@@ -333,6 +279,13 @@ def tickets(request):
 
 
 @login_required
+def tickets_list_api(request):
+    """JSON page of a ticket view (same view/filter params as the list page), used for infinite scroll."""
+    props = tickets.__wrapped__.__wrapped__(request)  # undecorated list view
+    return JsonResponse({'tickets': props['tickets'], 'pagination': props['pagination']})
+
+
+@login_required
 def bulk_mark_draft(request):
     """Bulk mark tickets as draft."""
     if request.method != 'POST':
@@ -346,7 +299,12 @@ def bulk_mark_draft(request):
             return JsonResponse({'error': 'No tickets selected'}, status=400)
         
         # Update tickets to draft status
-        updated_count = Ticket.objects.filter(uuid__in=ticket_ids).update(status='draft')
+        # Save one by one so signals and activity logging run
+        updated_count = 0
+        for ticket in Ticket.objects.filter(uuid__in=ticket_ids).exclude(status='draft'):
+            ticket.status = 'draft'
+            ticket.save()
+            updated_count += 1
         
         return JsonResponse({
             'success': True,
@@ -356,7 +314,8 @@ def bulk_mark_draft(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -373,7 +332,12 @@ def bulk_remove_draft(request):
             return JsonResponse({'error': 'No tickets selected'}, status=400)
         
         # Update draft tickets to 'new' status
-        updated_count = Ticket.objects.filter(uuid__in=ticket_ids, status='draft').update(status='new')
+        # Save one by one so the SLA clock starts as each ticket leaves draft
+        updated_count = 0
+        for ticket in Ticket.objects.filter(uuid__in=ticket_ids, status='draft'):
+            ticket.status = 'new'
+            ticket.save()
+            updated_count += 1
         
         return JsonResponse({
             'success': True,
@@ -383,7 +347,8 @@ def bulk_remove_draft(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -442,7 +407,8 @@ def bulk_assign_agent(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -492,7 +458,8 @@ def bulk_assign_team(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -569,7 +536,8 @@ def bulk_change_status(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -625,7 +593,8 @@ def bulk_change_priority(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -682,7 +651,8 @@ def bulk_change_type(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -732,7 +702,8 @@ def duplicate_ticket(request, uuid):
             'new_ticket_number': new_ticket.ticket_number
         })
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -759,7 +730,8 @@ def bulk_delete_tickets(request):
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        logger.exception('Request failed')
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=500)
 
 
 @login_required
@@ -810,70 +782,24 @@ def get_teams(request):
 
 
 @login_required
+@require_POST
 def upload_file(request):
-    """Upload a file to files-service and return its URL."""
-    import logging
-    logger = logging.getLogger(__name__)
-
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-
+    """Upload a file and return its URL."""
     if 'file' not in request.FILES:
         return JsonResponse({'error': 'No file provided'}, status=400)
 
-    file = request.FILES['file']
-    category = request.POST.get('category', 'attachments')
-
     try:
-        # Upload to files-service
-        files_service_url = getattr(settings, 'FILES_SERVICE_URL', 'http://localhost:5050')
-        upload_url = f"{files_service_url.rstrip('/')}/api/upload"
+        uploaded = store_upload(request.FILES['file'], request.POST.get('category', 'attachments'))
+    except UploadError as exc:
+        return JsonResponse({'error': exc.message}, status=exc.status)
 
-        # Get org name for file storage
-        org = 'default'
-
-        response = requests.post(
-            upload_url,
-            files={'file': (file.name, file.read(), file.content_type)},
-            data={'category': category, 'org': org},
-            timeout=60
-        )
-
-        if response.status_code != 201:
-            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
-            logger.error(f"Files service upload failed: {error_data}")
-            return JsonResponse({
-                'error': error_data.get('error', 'Failed to upload file')
-            }, status=400)
-
-        result = response.json()
-
-        if not result.get('success'):
-            return JsonResponse({
-                'error': result.get('error', 'Upload failed')
-            }, status=400)
-
-        # Get the first uploaded file
-        uploaded_files = result.get('data', {}).get('uploaded', [])
-        if not uploaded_files:
-            return JsonResponse({'error': 'No file was uploaded'}, status=400)
-
-        uploaded = uploaded_files[0]
-
-        return JsonResponse({
-            'file_url': uploaded.get('url'),
-            'file_name': uploaded.get('original_name'),
-            'file_size': uploaded.get('size'),
-            'file_type': uploaded.get('mime_type'),
-            'file_id': uploaded.get('file_id'),
-        })
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Files service connection error: {e}")
-        return JsonResponse({'error': 'Failed to connect to files service'}, status=500)
-    except Exception as e:
-        logger.error(f"File upload error: {e}")
-        return JsonResponse({'error': 'Failed to upload file'}, status=500)
+    return JsonResponse({
+        'file_url': uploaded.get('url'),
+        'file_name': uploaded.get('original_name'),
+        'file_size': uploaded.get('size'),
+        'file_type': uploaded.get('mime_type'),
+        'file_id': uploaded.get('file_id'),
+    })
 
 
 @login_required
@@ -1070,6 +996,61 @@ def add_ticket(request):
     }
 
 
+def _user_name(user):
+    return f"{user.first_name} {user.last_name}".strip() or user.username
+
+
+def _requester_other_tickets(ticket_obj, limit=6):
+    """Other tickets from the same requester (or guest email): open ones first, newest activity next."""
+    if ticket_obj.requester_id:
+        qs = Ticket.objects.filter(requester_id=ticket_obj.requester_id)
+    elif getattr(ticket_obj, 'is_guest_ticket', False) and ticket_obj.guest_email:
+        qs = Ticket.objects.filter(guest_email__iexact=ticket_obj.guest_email)
+    else:
+        return []
+
+    qs = qs.exclude(pk=ticket_obj.pk).exclude(status='draft').select_related('assignee', 'sla')
+    open_first = sorted(
+        qs.order_by('-updated_at')[:limit * 3],
+        key=lambda t: t.status in ('resolved', 'closed'),
+    )[:limit]
+    return [{
+        'uuid': str(t.uuid),
+        'ticket_number': t.ticket_number or f"#{t.id}",
+        'title': t.title,
+        'computed_status': t.computed_status,
+        'priority': t.priority,
+        'assignee': {'id': t.assignee.id, 'name': _user_name(t.assignee)} if t.assignee else None,
+        'updated_at': t.updated_at.strftime('%Y-%m-%d %H:%M'),
+    } for t in open_first]
+
+
+def _linked_tasks(ticket_obj):
+    """Tasks related to, or converted from, this ticket."""
+    from modules.tasks.models import Task
+
+    tasks = (
+        Task.objects.filter(
+            Q(related_ticket=ticket_obj) | Q(converted_from_ticket=ticket_obj) | Q(converted_to_ticket=ticket_obj)
+        )
+        .exclude(status=Task.Status.DRAFT)
+        .select_related('assignee')
+        .distinct()
+        .order_by('-updated_at')
+    )
+    return [{
+        'id': t.id,
+        'uuid': str(t.uuid),
+        'title': t.title,
+        'status': t.status,
+        'status_display': t.get_status_display(),
+        'priority': t.priority,
+        'assignee': {'id': t.assignee.id, 'name': _user_name(t.assignee)} if t.assignee else None,
+        'converted': t.converted_from_ticket_id == ticket_obj.id,
+        'source': t.converted_to_ticket_id == ticket_obj.id,
+    } for t in tasks]
+
+
 @login_required
 @inertia('TicketView')
 def ticket_view(request, uuid):
@@ -1231,29 +1212,7 @@ def ticket_view(request, uuid):
         'description': g.description
     } for g in groups]
 
-    # Get SLA data if exists
-    sla_data = None
-    if hasattr(ticket_obj, 'sla'):
-        sla = ticket_obj.sla
-        sla_data = {
-            'id': sla.id,
-            'policy': {
-                'id': sla.policy.id,
-                'name': sla.policy.name,
-                'priority': sla.policy.priority,
-                'first_response_time': sla.policy.first_response_time,
-                'resolution_time': sla.policy.resolution_time,
-            },
-            'response_due_at': sla.response_due_at.isoformat() if sla.response_due_at else None,
-            'resolution_due_at': sla.resolution_due_at.isoformat() if sla.resolution_due_at else None,
-            'response_breached': sla.response_breached,
-            'resolution_breached': sla.resolution_breached,
-            'is_on_hold': sla.is_on_hold,
-            'hold_reason': sla.hold_reason,
-            'hold_started_at': sla.hold_started_at.isoformat() if sla.hold_started_at else None,
-            'total_hold_time': sla.total_hold_time,
-            'created_at': sla.created_at.isoformat(),
-        }
+    sla_data = _serialize_ticket_sla(ticket_obj)
 
     return {
         'ticket': ticket_data,
@@ -1263,7 +1222,41 @@ def ticket_view(request, uuid):
         'users': users_data,
         'groups': groups_data,
         'sla': sla_data,
+        'requester_tickets': _requester_other_tickets(ticket_obj),
+        'linked_tasks': _linked_tasks(ticket_obj),
     }
+
+
+def _serialize_ticket_sla(ticket_obj):
+    """SLA payload shared by the ticket page and the split-view detail panel."""
+    if not hasattr(ticket_obj, 'sla'):
+        return None
+    sla = ticket_obj.sla
+    sla_data = {
+        'id': sla.id,
+        'policy': {
+            'id': sla.policy.id,
+            'name': sla.policy.name,
+            'priority': sla.policy.priority,
+            'first_response_time': sla.policy.first_response_time,
+            'resolution_time': sla.policy.resolution_time,
+        },
+        'response_due_at': sla.response_due_at.isoformat() if sla.response_due_at else None,
+        'resolution_due_at': sla.resolution_due_at.isoformat() if sla.resolution_due_at else None,
+        'responded_at': sla.first_responded_at.isoformat() if sla.first_responded_at else None,
+        'resolved_at': ticket_obj.resolved_at.isoformat() if ticket_obj.resolved_at else None,
+        'response_breached': sla.response_breached,
+        'resolution_breached': sla.resolution_breached,
+        'is_on_hold': sla.is_on_hold,
+        'hold_reason': sla.hold_reason,
+        'hold_started_at': sla.hold_started_at.isoformat() if sla.hold_started_at else None,
+        'total_hold_time': sla.total_hold_time,
+        'created_at': sla.created_at.isoformat(),
+        'started_at': sla.clock_started_at.isoformat(),
+        'restarted_at': sla.restarted_at.isoformat() if sla.restarted_at else None,
+        'restart_count': sla.restart_count,
+    }
+    return sla_data
 
 
 @login_required
@@ -1417,6 +1410,7 @@ def ticket_detail_api(request, uuid):
         'activities': activities,
         'users': users,
         'groups': groups,
+        'sla': _serialize_ticket_sla(ticket_obj),
     })
 
 
@@ -1469,15 +1463,14 @@ def _process_comment_mentions(comment, ticket, mention_ids, author):
     
     # Get business info
     try:
-        from django.db import connection
-        company_name = Client.get_current().name
+        company_name = organization_name('Support')
     except Exception:
         company_name = 'Support'
     
-    base_url = getattr(settings, 'SITE_URL', 'https://app.coredesk.io')
+    base_url = site_url()
     ticket_url = f"{base_url}/tickets/{ticket.uuid}"
     
-    author_name = f"{author.first_name} {author.last_name}".strip() or author.username
+    author_name = _agent_display_name(author)
     
     mailer = Mailer()
     
@@ -1486,7 +1479,7 @@ def _process_comment_mentions(comment, ticket, mention_ids, author):
         if not user.email:
             continue
         
-        user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        user_name = _agent_display_name(user)
         
         try:
             context = {
@@ -1494,7 +1487,7 @@ def _process_comment_mentions(comment, ticket, mention_ids, author):
                 'mentioned_by': author_name,
                 'ticket_number': ticket.ticket_number or f"#{ticket.id}",
                 'ticket_subject': ticket.title,
-                'comment_preview': comment.message[:200] + ('...' if len(comment.message) > 200 else ''),
+                'comment_preview': (lambda t: t[:200] + ('...' if len(t) > 200 else ''))(strip_tags(comment.message or '').replace('&nbsp;', ' ').strip()),
                 'ticket_url': ticket_url,
                 'company_name': company_name,
             }
@@ -1573,6 +1566,51 @@ def ticket_add_comment(request, uuid):
         _process_comment_mentions(comment, ticket, mention_ids, request.user)
 
     return JsonResponse({'success': True})
+
+
+@login_required
+def ticket_comment_detail(request, uuid, comment_id):
+    """Toggle visibility (PATCH) or delete (DELETE) a ticket comment."""
+    try:
+        comment = TicketComment.objects.get(id=comment_id, ticket__uuid=uuid)
+    except TicketComment.DoesNotExist:
+        return JsonResponse({'error': 'Comment not found'}, status=404)
+
+    if request.method == 'DELETE':
+        comment.delete()
+        return JsonResponse({'success': True})
+    if request.method == 'PATCH':
+        data = json.loads(request.body or '{}')
+        if 'is_internal' in data:
+            comment.is_internal = bool(data['is_internal'])
+            comment.save(update_fields=['is_internal'])
+            comment.replies.update(is_internal=comment.is_internal)
+        return JsonResponse({'success': True})
+    return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@login_required
+def mentioned_user_card(request, user_id):
+    """Basic details for the hover card shown on an @mention."""
+    from modules.users.models import UserProfile
+
+    try:
+        profile = UserProfile.objects.select_related('user', 'role').prefetch_related('groups').get(
+            user_id=user_id, user__is_active=True
+        )
+    except UserProfile.DoesNotExist:
+        return JsonResponse({'error': 'User not found'}, status=404)
+
+    user = profile.user
+    return JsonResponse({
+        'id': user.id,
+        'name': _agent_display_name(user, profile),
+        'email': user.email,
+        'avatar': profile.avatar_url or None,
+        'role': profile.role.name if profile.role else None,
+        'job_title': profile.job_title or None,
+        'groups': [g.name for g in profile.groups.all()],
+    })
 
 
 @login_required
@@ -1830,10 +1868,11 @@ def get_ticket_work_items(request, uuid):
     except Ticket.DoesNotExist:
         return JsonResponse({'error': 'Ticket not found'}, status=404)
 
-    work_items = WorkItem.objects.filter(ticket=ticket).select_related('assignee', 'created_by')
+    work_items = WorkItem.objects.filter(ticket=ticket).select_related('assignee', 'created_by').prefetch_related('source_tasks')
 
     work_items_data = []
     for item in work_items:
+        source = next(iter(item.source_tasks.all()), None)
         work_items_data.append({
             'id': item.id,
             'title': item.title,
@@ -1850,6 +1889,7 @@ def get_ticket_work_items(request, uuid):
             'created_at': item.created_at.strftime('%b %d, %Y'),
             'completed_at': item.completed_at.strftime('%b %d, %Y %H:%M') if item.completed_at else None,
             'work_notes': item.work_notes,
+            'source_task': {'id': source.id, 'uuid': str(source.uuid), 'title': source.title} if source else None,
         })
 
     return JsonResponse({'work_items': work_items_data})
@@ -2142,31 +2182,30 @@ def search_mentionable_users(request):
     # Base queryset: agents and admins (not customers)
     base_qs = UserProfile.objects.select_related('user', 'role').filter(
         user__is_active=True
-    ).exclude(
-        role__name__iexact='Customer'  # Exclude customers from mentions
+    ).filter(
+        Q(role__name__in=['Administrator', 'Agent']) | Q(is_agent=True) | Q(user__is_superuser=True)
     ).only(
-        'id', 'avatar_url', 'user__id', 'user__username', 'user__email',
+        'id', 'avatar_url', 'full_name', 'user__id', 'user__username', 'user__email',
         'user__first_name', 'user__last_name', 'role__name'
     )
     
     # If query provided, filter by name/username/email
     if query:
         users = base_qs.filter(
+            Q(full_name__icontains=query) |
             Q(user__first_name__icontains=query) |
             Q(user__last_name__icontains=query) |
             Q(user__username__icontains=query) |
             Q(user__email__icontains=query)
         )[:limit]
     else:
-        # No query - return all users (ordered by name)
-        users = base_qs.order_by('user__first_name', 'user__last_name')[:limit]
+        # No query - return all users (ordered by real name)
+        users = base_qs.order_by('full_name', 'user__first_name', 'user__last_name')[:limit]
     
     results = []
     for profile in users:
         user = profile.user
-        name = f"{user.first_name} {user.last_name}".strip()
-        if not name:
-            name = user.username
+        name = _agent_display_name(user, profile)
         
         results.append({
             'id': user.id,

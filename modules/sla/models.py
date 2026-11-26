@@ -6,7 +6,7 @@ from django.utils import timezone
 class SLASettings(models.Model):
     """
     Global SLA settings - controls whether SLA is enabled/disabled
-    Only one instance should exist per tenant
+    Only one instance should exist
     """
     enabled = models.BooleanField(
         default=False,
@@ -34,6 +34,7 @@ class SLASettings(models.Model):
     class Meta:
         verbose_name = "SLA Settings"
         verbose_name_plural = "SLA Settings"
+        db_table = "sla_settings"
     
     def __str__(self):
         return f"SLA Settings ({'Enabled' if self.enabled else 'Disabled'})"
@@ -51,7 +52,7 @@ class SLAPolicy(models.Model):
     Includes response time and resolution time targets based on priority.
     """
     PRIORITY_CHOICES = [
-        ('critical', 'Critical'),
+        ('urgent', 'Urgent'),
         ('high', 'High'),
         ('medium', 'Medium'),
         ('low', 'Low'),
@@ -62,8 +63,8 @@ class SLAPolicy(models.Model):
         ('inactive', 'Inactive'),
     ]
     
-    name = models.CharField(max_length=200, help_text="Policy name (e.g., Critical Priority SLA)")
-    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, unique=True, help_text="Ticket priority this policy applies to")
+    name = models.CharField(max_length=200, help_text="Policy name (e.g., Urgent Priority SLA)")
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, help_text="Ticket priority this policy applies to")
     description = models.TextField(blank=True, help_text="Policy description")
     
     # Response and resolution times in minutes
@@ -90,21 +91,34 @@ class SLAPolicy(models.Model):
         default=False,
         help_text="Exclude holidays from SLA time calculation"
     )
-    apply_to_new_tickets = models.BooleanField(
-        default=False,
-        help_text="Automatically apply this policy to new tickets matching the priority"
-    )
     send_escalation_emails = models.BooleanField(
         default=False,
         help_text="Send email notifications when SLA is at risk of breach"
     )
     auto_assign_on_breach = models.BooleanField(
         default=False,
-        help_text="Automatically assign ticket to an administrator when SLA is breached"
+        help_text="Send escalation email to administrator when SLA is breached"
     )
     pause_on_pending = models.BooleanField(
         default=False,
         help_text="Pause SLA timer when ticket status is pending"
+    )
+    
+    # Custom trigger rules
+    use_custom_rules = models.BooleanField(
+        default=False,
+        help_text="Use custom rules instead of simple priority matching"
+    )
+    custom_rules = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="JSON array of custom trigger rules"
+    )
+    rules_logic = models.CharField(
+        max_length=10,
+        default='AND',
+        choices=[('AND', 'AND'), ('OR', 'OR')],
+        help_text="Logic to combine rules (AND/OR)"
     )
     
     # Notification settings
@@ -122,6 +136,7 @@ class SLAPolicy(models.Model):
         verbose_name = "SLA Policy"
         verbose_name_plural = "SLA Policies"
         ordering = ['-priority']
+        db_table = "sla_policy"
     
     def __str__(self):
         return f"{self.name} ({self.get_priority_display()})"
@@ -212,6 +227,7 @@ class BusinessHours(models.Model):
     class Meta:
         verbose_name = "Business Hours"
         verbose_name_plural = "Business Hours"
+        db_table = "sla_business_hours"
     
     def __str__(self):
         return self.name
@@ -258,6 +274,7 @@ class Holiday(models.Model):
         verbose_name = "Holiday"
         verbose_name_plural = "Holidays"
         ordering = ['date']
+        db_table = "sla_holiday"
     
     def __str__(self):
         return f"{self.name} - {self.date}"
@@ -301,6 +318,24 @@ class TicketSLA(models.Model):
         null=True,
         blank=True,
         help_text="When ticket resolution is due"
+    )
+    
+    # When an agent first replied publicly; stops the response clock
+    first_responded_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the first agent response was sent"
+    )
+
+    # Set when the clock was restarted (e.g. the priority changed to one with its own policy)
+    restarted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the SLA clock was last restarted, null if it never was"
+    )
+    restart_count = models.PositiveIntegerField(
+        default=0,
+        help_text="How many times the SLA clock has been restarted"
     )
     
     # Breach tracking
@@ -363,21 +398,28 @@ class TicketSLA(models.Model):
     class Meta:
         verbose_name = "Ticket SLA"
         verbose_name_plural = "Ticket SLAs"
+        db_table = "sla_ticket"
         indexes = [
             models.Index(fields=['policy']),
             models.Index(fields=['response_due_at']),
             models.Index(fields=['resolution_due_at']),
+            # SLA engine: running clocks due for warning/breach
+            models.Index(fields=['is_on_hold', 'resolution_breached', 'resolution_due_at'], name='sla_tkt_running_due_idx'),
+            # SLA engine: clocks held by business hours / holidays
+            models.Index(fields=['is_on_hold', 'hold_reason'], name='sla_tkt_hold_reason_idx'),
+            # SLA engine: first-response breach marking
+            models.Index(fields=['response_breached', 'response_due_at'], name='sla_tkt_resp_due_idx'),
         ]
     
     def __str__(self):
         return f"SLA for Ticket #{self.ticket.ticket_number} - {self.policy.name}"
     
-    def calculate_due_dates(self):
+    def calculate_due_dates(self, start_time=None):
         """Calculate response and resolution due dates based on policy."""
         from datetime import timedelta
         
-        # Start from ticket creation time
-        start_time = self.ticket.created_at
+        # Start from ticket creation time unless the clock starts later (e.g. a draft being submitted)
+        start_time = start_time or self.ticket.created_at
         
         # Calculate response due date
         self.response_due_at = start_time + timedelta(minutes=self.policy.first_response_time)
@@ -386,6 +428,48 @@ class TicketSLA(models.Model):
         self.resolution_due_at = start_time + timedelta(minutes=self.policy.resolution_time)
         
         self.save()
+
+    @property
+    def clock_started_at(self):
+        """When the current SLA targets started counting."""
+        return self.restarted_at or self.created_at
+
+    def restart(self, policy, start_time=None):
+        """
+        Move this SLA onto `policy` and start its clock afresh from `start_time` (default now).
+
+        Targets are measured from the restart, never from ticket creation, so
+        time spent under the previous policy can't make the new one breach.
+        An agent reply that already happened is kept and counts as the first
+        response, so it is not judged against the new targets.
+        """
+        start_time = start_time or timezone.now()
+
+        self.policy = policy
+        self.restarted_at = start_time
+        self.restart_count += 1
+
+        # A hold belonged to the old clock, except that a pending ticket stays paused
+        self.total_hold_time = 0
+        if self.ticket.status == 'pending':
+            self.is_on_hold = True
+            self.hold_reason = 'Ticket placed on hold'
+            self.hold_started_at = start_time
+        else:
+            self.is_on_hold = False
+            self.hold_reason = ''
+            self.hold_started_at = None
+
+        # Breach and notification tracking starts over for the new targets
+        self.response_breached = False
+        self.resolution_breached = False
+        self.breach_warning_sent_response = False
+        self.breach_warning_sent_resolution = False
+        self.breach_email_sent = False
+        self.escalation_email_sent = False
+        self.auto_assigned_on_breach = False
+
+        self.calculate_due_dates(start_time=start_time)
     
     def hold(self, reason):
         """Put SLA timer on hold."""

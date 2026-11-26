@@ -1,8 +1,10 @@
 import React, { useState } from 'react'
 import { Head, useForm, Link, router } from '@inertiajs/react'
+import { useDirtyState, useUnsavedChanges } from '../context/UnsavedChangesContext'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import { THEME } from '../constants/theme'
+import SimpleSelect from '../components/SimpleSelect'
 
 export default function UserForm({ mode = 'create', user = {}, orgs = [], groups = [], errors: serverErrors = {} }) {
   const [currentStep, setCurrentStep] = useState(1)
@@ -16,6 +18,9 @@ export default function UserForm({ mode = 'create', user = {}, orgs = [], groups
     organization: user.organization || '',
     groups: user.groups || [],
   })
+  const dirty = useDirtyState(data)
+  const { allowNextNavigation } = useUnsavedChanges(dirty)
+
 
   const toggleGroup = (groupId) => {
     const current = data.groups || []
@@ -55,6 +60,7 @@ export default function UserForm({ mode = 'create', user = {}, orgs = [], groups
             return formData
           },
           onSuccess: () => {
+            allowNextNavigation()
             router.visit('/people/')
             resolve()
           },
@@ -216,16 +222,7 @@ export default function UserForm({ mode = 'create', user = {}, orgs = [], groups
                   <>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Organization</label>
-                      <select
-                        value={data.organization}
-                        onChange={(e) => setData('organization', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      >
-                        <option value="">— Select Organization —</option>
-                        {orgs?.map((o) => (
-                          <option key={o.id} value={o.id}>{o.name}</option>
-                        ))}
-                      </select>
+                      <SimpleSelect value={data.organization} onChange={(value) => setData('organization', value)} options={orgs || []} emptyLabel="— Select Organization —" />
                     </div>
 
                     <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -240,6 +237,7 @@ export default function UserForm({ mode = 'create', user = {}, orgs = [], groups
                         Make this user an agent
                       </label>
                     </div>
+                    {allErrors?.is_agent && <p className="-mt-3 text-sm text-red-600">{allErrors.is_agent}</p>}
 
                     {data.is_agent && (
                       <div>

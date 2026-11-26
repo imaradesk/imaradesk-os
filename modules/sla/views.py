@@ -6,6 +6,9 @@ from .forms import SLAPolicyForm, BusinessHoursForm, HolidayForm
 import json
 import pytz
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 @login_required
 @require_http_methods(["GET"])
@@ -69,9 +72,10 @@ def update_sla_settings(request):
             }
         })
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -86,6 +90,10 @@ def create_sla_policy(request):
         if 'escalate_on_breach' in data:
             data['send_escalation_emails'] = data.pop('escalate_on_breach')
         
+        # Default escalation/auto-assign fields to False if not provided (feature disabled in UI)
+        data.setdefault('send_escalation_emails', False)
+        data.setdefault('auto_assign_on_breach', False)
+        
         form = SLAPolicyForm(data)
         
         if form.is_valid():
@@ -96,7 +104,7 @@ def create_sla_policy(request):
                 'policy': {
                     'id': policy.id,
                     'name': policy.name,
-                    'priority': policy.priority,
+                    'priority': (policy.priority or '').lower(),
                     'first_response': policy.get_first_response_display(),
                     'first_response_minutes': policy.first_response_time,
                     'resolution_time': policy.get_resolution_time_display(),
@@ -105,11 +113,13 @@ def create_sla_policy(request):
                     'description': policy.description,
                     'apply_business_hours': policy.apply_business_hours,
                     'apply_holidays': policy.apply_holidays,
-                    'apply_to_new_tickets': policy.apply_to_new_tickets,
                     'send_escalation_emails': policy.send_escalation_emails,
                     'auto_assign_on_breach': policy.auto_assign_on_breach,
                     'pause_on_pending': policy.pause_on_pending,
                     'notify_before_breach': policy.notify_before_breach,
+                    'use_custom_rules': policy.use_custom_rules,
+                    'custom_rules': policy.custom_rules,
+                    'rules_logic': policy.rules_logic,
                 }
             })
         else:
@@ -128,9 +138,10 @@ def create_sla_policy(request):
                 'errors': form.errors
             }, status=400)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -146,6 +157,10 @@ def update_sla_policy(request, policy_id):
         if 'escalate_on_breach' in data:
             data['send_escalation_emails'] = data.pop('escalate_on_breach')
         
+        # Default escalation/auto-assign fields to False if not provided (feature disabled in UI)
+        data.setdefault('send_escalation_emails', False)
+        data.setdefault('auto_assign_on_breach', False)
+        
         form = SLAPolicyForm(data, instance=policy)
         
         if form.is_valid():
@@ -156,7 +171,7 @@ def update_sla_policy(request, policy_id):
                 'policy': {
                     'id': policy.id,
                     'name': policy.name,
-                    'priority': policy.priority,
+                    'priority': (policy.priority or '').lower(),
                     'first_response': policy.get_first_response_display(),
                     'first_response_minutes': policy.first_response_time,
                     'resolution_time': policy.get_resolution_time_display(),
@@ -165,11 +180,13 @@ def update_sla_policy(request, policy_id):
                     'description': policy.description,
                     'apply_business_hours': policy.apply_business_hours,
                     'apply_holidays': policy.apply_holidays,
-                    'apply_to_new_tickets': policy.apply_to_new_tickets,
                     'send_escalation_emails': policy.send_escalation_emails,
                     'auto_assign_on_breach': policy.auto_assign_on_breach,
                     'pause_on_pending': policy.pause_on_pending,
                     'notify_before_breach': policy.notify_before_breach,
+                    'use_custom_rules': policy.use_custom_rules,
+                    'custom_rules': policy.custom_rules,
+                    'rules_logic': policy.rules_logic,
                 }
             })
         else:
@@ -193,9 +210,10 @@ def update_sla_policy(request, policy_id):
             'message': 'SLA policy not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -216,9 +234,10 @@ def delete_sla_policy(request, policy_id):
             'message': 'SLA policy not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -249,9 +268,10 @@ def create_holiday(request):
                 'errors': form.errors
             }, status=400)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -288,9 +308,10 @@ def update_holiday(request, holiday_id):
             'message': 'Holiday not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -311,9 +332,10 @@ def delete_holiday(request, holiday_id):
             'message': 'Holiday not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
@@ -349,20 +371,21 @@ def save_business_hours(request):
                 'errors': form.errors
             }, status=400)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
 @login_required
 @require_http_methods(["POST"])
-def hold_sla(request, ticket_id):
+def hold_sla(request, ticket_uuid):
     """Put SLA timer on hold for a ticket."""
     try:
         from modules.ticket.models import Ticket
         
-        ticket = Ticket.objects.get(id=ticket_id)
+        ticket = Ticket.objects.get(uuid=ticket_uuid)
         
         # Check if ticket has SLA
         if not hasattr(ticket, 'sla'):
@@ -398,20 +421,21 @@ def hold_sla(request, ticket_id):
             'message': 'Ticket not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
 @login_required
 @require_http_methods(["POST"])
-def resume_sla(request, ticket_id):
+def resume_sla(request, ticket_uuid):
     """Resume SLA timer from hold."""
     try:
         from modules.ticket.models import Ticket
         
-        ticket = Ticket.objects.get(id=ticket_id)
+        ticket = Ticket.objects.get(uuid=ticket_uuid)
         
         # Check if ticket has SLA
         if not hasattr(ticket, 'sla'):
@@ -439,7 +463,8 @@ def resume_sla(request, ticket_id):
             'message': 'Ticket not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
