@@ -9,6 +9,8 @@ pytz==2025.2
 
 # Celery for background tasks
 celery==5.4.0
+# Pinned: newer kombu releases require redis-py >= 6.1 and crash the workers with VersionMismatch
+kombu==5.6.2
 redis==5.0.1
 django-celery-beat==2.6.0
 django-celery-results==2.5.1
@@ -25,6 +27,15 @@ openpyxl==3.1.2
 # Two-Factor Authentication
 pyotp==2.9.0
 qrcode[pil]==7.4.2
+
+# Input sanitization
+bleach[css]==6.1.0
+
+# Encryption for sensitive data (SMTP passwords, etc.)
+cryptography==42.0.5
+
+# User agent parsing for login tracking
+user-agents==2.2.0
 
 # Supervisor for process management
 supervisor==4.2.5

@@ -3,21 +3,70 @@ from django.conf import settings
 from django.utils.html import strip_tags
 import logging
 import re
+import ssl
 from typing import Dict, Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
+
+def _get_ssl_context():
+    """Get SSL context that skips verification in DEBUG mode."""
+    if settings.DEBUG:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
+    return None
+
 class Mailer:
 
-    def get_smtp_connection(self):
+    def get_smtp_connection(self, use_default_only=False):
         """
             Returns a tuple: (
                 SMTP connection,
                 from_email string
                 )
-            Uses Django default EMAIL_* settings and DEFAULT_FROM_NAME.
+            Priority:
+            1. SMTP settings saved in the database (if enabled and use_default_only=False).
+            2. Django default EMAIL_* settings and DEFAULT_FROM_NAME.
+            
+            Args:
+                use_default_only: If True, skip the saved SMTP settings and use only Django default settings.
+                                  Use this for system-level emails like account deletion.
         """
-        # Use default Django settings
+        # Try the SMTP settings saved in the database (unless use_default_only is True)
+        if not use_default_only:
+            try:
+                from modules.settings.models import SMTP
+                smtp = SMTP.objects.first()
+                if smtp and smtp.enabled and smtp.active and smtp.host:
+                    try:
+                        # Use get_password() to decrypt the stored password
+                        password = smtp.get_password()
+                        connection = get_connection(
+                            host=smtp.host,
+                            port=smtp.port,
+                            username=smtp.username,
+                            password=password,
+                            use_tls=smtp.use_tls,
+                            use_ssl=smtp.use_ssl,
+                        )
+                        ssl_ctx = _get_ssl_context()
+                        if ssl_ctx:
+                            connection.ssl_context = ssl_ctx
+                        from_email = (
+                            f"{smtp.sender_name} <{smtp.default_from_email}>"
+                            if smtp.sender_name else smtp.default_from_email
+                        )
+                        logger.info(f"[Mailer] Using saved SMTP settings: {smtp.host}:{smtp.port}")
+                        return connection, from_email
+                    except Exception as e:
+                        logger.warning(f"[Mailer] Failed to use custom SMTP config: {e}")
+            except Exception as e:
+                # Table not available yet - fall back to Django settings
+                logger.debug(f"[Mailer] Saved SMTP settings not available, using Django settings: {e}")
+
+        # Fallback to default Django settings
         try:
             connection = get_connection(
                 host=settings.EMAIL_HOST,
@@ -27,12 +76,15 @@ class Mailer:
                 use_tls=getattr(settings, 'EMAIL_USE_TLS', False),
                 use_ssl=getattr(settings, 'EMAIL_USE_SSL', True),
             )
+            ssl_ctx = _get_ssl_context()
+            if ssl_ctx:
+                connection.ssl_context = ssl_ctx
             default_name = getattr(settings, 'DEFAULT_FROM_NAME', None)
             default_email = settings.DEFAULT_FROM_EMAIL
             from_email = f"{default_name} <{default_email}>" if default_name else default_email
             return connection, from_email
         except Exception as e:
-            logger.error(f"[Mailer] Failed to load SMTP config: {e}")
+            logger.error(f"[Mailer] Failed to load fallback SMTP config: {e}")
             return get_connection(), settings.DEFAULT_FROM_EMAIL
     
     def get_template(self, template_type: str):
@@ -102,6 +154,90 @@ class Mailer:
                 sanitized[key] = str(value)
         
         return sanitized
+
+    def _looks_like_full_email_doc(self, html):
+        """True when body_html is already a complete <html> email document."""
+        if not html:
+            return False
+        lowered = html.lower()
+        return '<html' in lowered and '</html>' in lowered
+
+    def _wrap_system_doc_in_base(self, html):
+        """Give a legacy full-document system template the shared base look.
+
+        Rewrites ONLY the outer shell (page background, header row, footer
+        row) and injects the shared CSS. The inner content block -- and every
+        {{token}} inside it -- is preserved byte-for-byte, so this cannot
+        break token replacement or change email copy.
+        """
+        import re
+
+        try:
+            from shared.utilities.templates.email_base import (
+                BASE_CSS, CARD_BORDER, SHELL_MARKER,
+            )
+        except Exception:
+            return html
+
+        # Already built on the shared shell -- nothing to rewrite
+        if SHELL_MARKER in html:
+            return html
+
+        # 1. Shared CSS into <head> (new block; legacy docs have no <style>).
+        css_block = '\n    <style>\n' + BASE_CSS + '\n    </style>\n'
+        if re.search(r'</head>', html, re.I):
+            html = re.sub(r'(</head>)', css_block + r'\1', html, count=1, flags=re.I)
+
+        # 2. Light-grey page background + strip legacy logo images
+        #    (headers are title-only now; body may legitimately contain images).
+        html = re.sub(
+            r'background-color:\s*#ffffff',
+            'background-color: #ffffff',
+            html, count=1, flags=re.I,
+        )
+        html = re.sub(
+            r'<img[^>]*src="https://imaradesk\.com/imaradesk-logo\.png"[^>]*>',
+            '',
+            html, flags=re.I,
+        )
+
+        # 3. Shared header row: title bar above the card (no logo).
+        header_row = (
+            '<div style="max-width: 600px; margin: 20px auto 0 auto; padding: 18px 24px; '
+            'background-color: #ffffff; border: 1px solid ' + CARD_BORDER
+            + '; border-bottom: none; border-radius: 10px 10px 0 0; text-align: left;">'
+            '<span style="margin: 0; font-size: 18px; font-weight: 700; color: #111827;">'
+            'Imaradesk</span>'
+            '</div>'
+        )
+        html = re.sub(
+            r'(<div style="max-width:\s*600px;[^"]*">)',
+            header_row + r'\1',
+            html, count=1,
+        )
+
+        # 4. Shared footer row: sign-off below the card. "The <business> Team"
+        #    when the tenant opted in, else "The Imaradesk Team".
+        team_name = 'Imaradesk'
+        try:
+            from modules.settings.models import NotificationSettings
+            if NotificationSettings.get_settings().use_business_name_in_footer:
+                team_name = '{{company_name}}'
+        except Exception:
+            pass
+        footer_row = (
+            '<div style="max-width: 600px; margin: 0 auto 20px auto; padding: 20px 36px 24px 36px; '
+            'background-color: #ffffff; color: #6B746F; font-size: 12px; line-height: 1.6; text-align: left;">'
+            '<p style="margin: 0 0 2px 0;">Best regards,</p>'
+            '<p style="margin: 0;">The ' + team_name + ' Team</p>'
+            '</div>'
+        )
+        html = re.sub(
+            r'(</div>\s*\n\s*</div>\s*\n\s*</body>)',
+            footer_row + r'\1',
+            html, count=1,
+        )
+        return html
     
     def replace_tokens(self, text: str, context: Dict) -> str:
         """
@@ -218,7 +354,14 @@ class Mailer:
             
             # Render template
             subject, html_body, text_body = self.render_template(template, context)
-            
+
+            # Legacy system templates are full standalone documents with an
+            # outdated look. Wrap them in the shared base shell so global
+            # mail matches the makaosmart-style design used everywhere else.
+            # Copy is untouched -- only the outer shell + CSS change.
+            if self._looks_like_full_email_doc(html_body):
+                html_body = self._wrap_system_doc_in_base(html_body)
+
             # Add subject prefix if provided
             if subject_prefix:
                 subject = f"{subject_prefix}{subject}"
@@ -307,7 +450,7 @@ class Mailer:
             'ticket_status': ticket.get_status_display(),
             'customer_name': customer_name,
             'agent_name': ticket.assignee.get_full_name() if ticket.assignee else 'Support Team',
-            'ticket_url': self._build_absolute_url(f'/tickets/{ticket.id}/'),
+            'ticket_url': self._build_absolute_url(f'/tickets/{ticket.uuid}/'),
             'company_name': getattr(settings, 'COMPANY_NAME', 'Support Team'),
         }
         
@@ -350,12 +493,14 @@ class Mailer:
         # Build task context
         context = {
             'task_number': getattr(task, 'task_number', task.id),
-            'task_title': getattr(task, 'title', task.name) if hasattr(task, 'title') else task.name,
+            'task_title': task.title,
             'task_priority': task.get_priority_display() if hasattr(task, 'get_priority_display') else 'Normal',
             'task_status': task.get_status_display() if hasattr(task, 'get_status_display') else task.status,
+            'due_date': task.due_date.strftime('%Y-%m-%d') if hasattr(task, 'due_date') and task.due_date else 'Not set',
             'user_name': to_user.get_full_name(),
             'agent_name': to_user.get_full_name(),
-            'task_url': self._build_absolute_url(f'/tasks/{task.id}/'),
+            'assignee_name': to_user.get_full_name(),
+            'task_url': self._build_absolute_url(f'/tasks/?task={task.uuid}' if hasattr(task, 'uuid') and task.uuid else f'/tasks/?task={task.id}'),
             'company_name': getattr(settings, 'COMPANY_NAME', 'Support Team'),
         }
         
@@ -401,7 +546,8 @@ class Mailer:
         cc_emails: Optional[List[str]] = None,
         bcc_emails: Optional[List[str]] = None,
         attachments: Optional[List[Tuple[str, bytes, str]]] = None,
-        fail_silently: bool = True
+        fail_silently: bool = True,
+        use_default_smtp: bool = False
     ) -> bool:
         """
         Send email with raw HTML/text content (for global templates).
@@ -417,6 +563,7 @@ class Mailer:
             bcc_emails: Optional list of BCC recipients
             attachments: Optional list of (filename, content, mimetype) tuples
             fail_silently: If True, don't raise exceptions on send failure
+            use_default_smtp: If True, use default Django SMTP settings (not the saved ones)
         
         Returns:
             True if email sent successfully, False otherwise
@@ -458,7 +605,7 @@ class Mailer:
             
             # Get SMTP connection
             logger.info("[Mailer] Getting SMTP connection...")
-            connection, from_email = self.get_smtp_connection()
+            connection, from_email = self.get_smtp_connection(use_default_only=use_default_smtp)
             logger.info(f"[Mailer] SMTP connection obtained - From: {from_email}")
             
             # Create email message

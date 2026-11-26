@@ -6,6 +6,135 @@ import uuid
 User = get_user_model()
 
 
+class Project(models.Model):
+    """
+    A project groups existing tasks. Tasks keep working without a project;
+    the Task.project relation is optional.
+    """
+
+    class Status(models.TextChoices):
+        PLANNED = 'planned', 'Planned'
+        ACTIVE = 'active', 'Active'
+        ON_HOLD = 'on_hold', 'On Hold'
+        COMPLETED = 'completed', 'Completed'
+        CANCELED = 'canceled', 'Canceled'
+
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNED)
+
+    owner = models.ForeignKey(
+        User,
+        related_name='owned_projects',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="User accountable for the project",
+    )
+    created_by = models.ForeignKey(
+        User,
+        related_name='created_projects',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+
+    # Archiving is preferred over deletion so task history is preserved.
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        db_table = 'task_project'
+        indexes = [
+            models.Index(fields=['is_archived', 'status']),
+            models.Index(fields=['owner']),
+            models.Index(fields=['target_date']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(start_date__isnull=True)
+                    | models.Q(target_date__isnull=True)
+                    | models.Q(target_date__gte=models.F('start_date'))
+                ),
+                name='task_project_target_after_start',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class ProjectActivity(models.Model):
+    """Activity log for project-level events (task events stay in TaskActivityStream)."""
+
+    class ActivityType(models.TextChoices):
+        PROJECT_CREATED = 'project_created', 'Project Created'
+        PROJECT_UPDATED = 'project_updated', 'Project Updated'
+        STATUS_CHANGED = 'status_changed', 'Status Changed'
+        OWNER_CHANGED = 'owner_changed', 'Owner Changed'
+        ARCHIVED = 'archived', 'Archived'
+        UNARCHIVED = 'unarchived', 'Unarchived'
+        TASK_ADDED = 'task_added', 'Task Added'
+        TASK_REMOVED = 'task_removed', 'Task Removed'
+
+    project = models.ForeignKey(Project, related_name='activities', on_delete=models.CASCADE)
+    activity_type = models.CharField(max_length=30, choices=ActivityType.choices)
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    description = models.TextField()
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        db_table = 'task_project_activity'
+        indexes = [models.Index(fields=['project', '-created_at'])]
+        verbose_name_plural = 'Project activities'
+
+    def __str__(self):
+        return f"{self.activity_type} on {self.project_id}"
+
+
+# Icons and colours a type can use. The frontend mirrors these keys (components/tasks/taskTypes.jsx).
+TASK_TYPE_ICONS = (
+    'check-square', 'bug', 'sparkles', 'trending-up', 'wrench', 'lightbulb', 'rocket', 'flag', 'bookmark',
+    'file-text', 'megaphone', 'shopping-cart', 'truck', 'users', 'phone', 'mail', 'calendar', 'shield',
+    'wallet', 'package', 'clipboard-list', 'search', 'heart', 'star',
+)
+TASK_TYPE_COLORS = ('blue', 'red', 'emerald', 'violet', 'slate', 'amber', 'pink', 'teal', 'indigo', 'orange')
+
+
+class TaskType(models.Model):
+    """A configurable kind of task (Bug, Feature, Campaign, Site visit, ...)."""
+    name = models.CharField(max_length=60, unique=True)
+    description = models.CharField(max_length=255, blank=True)
+    icon = models.CharField(max_length=30, default='check-square')
+    color = models.CharField(max_length=20, default='blue')
+    position = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['position', 'id']
+        db_table = 'task_type'
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def default(cls):
+        """Type given to tasks created without one: the first active type."""
+        return cls.objects.filter(is_active=True).first()
+
+
 class Task(models.Model):
     """Task model for internal work items."""
     
@@ -26,6 +155,14 @@ class Task(models.Model):
     # Basic Information
     title = models.CharField(max_length=255)
     description = models.TextField()
+    task_type = models.ForeignKey(
+        'TaskType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tasks',
+        help_text="Configurable kind of work (Bug, Feature, Campaign, ...)",
+    )
     
     # UUID
     uuid = models.UUIDField(
@@ -82,7 +219,32 @@ class Task(models.Model):
         related_name='converted_tasks',
         help_text="Original ticket if this task was converted from a ticket"
     )
+    converted_to_ticket = models.ForeignKey(
+        'ticket.Ticket',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='converted_from_tasks',
+        help_text="Ticket created by converting this task"
+    )
+    converted_to_work_item = models.ForeignKey(
+        'ticket.WorkItem',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='source_tasks',
+        help_text="Ticket work item created by converting this task"
+    )
     
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tasks',
+        help_text="Optional project this task belongs to",
+    )
+
     # Dates
     due_date = models.DateField(null=True, blank=True, help_text="Task due date")
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -102,6 +264,7 @@ class Task(models.Model):
             models.Index(fields=['created_by']),
             models.Index(fields=['priority']),
             models.Index(fields=['due_date']),
+            models.Index(fields=['project', 'status']),
         ]
     
     def __str__(self):
@@ -135,7 +298,39 @@ class Task(models.Model):
                 description=f"Task created by {self.created_by.get_full_name() if self.created_by else 'Unknown'}",
                 metadata={'initial_status': self.status, 'initial_priority': self.priority}
             )
+            if self.project_id:
+                ProjectActivity.objects.create(
+                    project_id=self.project_id,
+                    activity_type=ProjectActivity.ActivityType.TASK_ADDED,
+                    actor=self.created_by,
+                    description=f"Task #{self.id} \"{self.title}\" added",
+                    metadata={'task_id': self.id, 'task_uuid': str(self.uuid)},
+                )
         elif old_instance:
+            # Track project changes
+            if old_instance.project_id != self.project_id:
+                new_name = self.project.name if self.project_id else None
+                TaskActivityStream.objects.create(
+                    task=self,
+                    activity_type=TaskActivityStream.ActivityType.PROJECT_CHANGED,
+                    description=f"Moved to project {new_name}" if new_name else "Removed from project",
+                    metadata={'old_value': old_instance.project_id, 'new_value': self.project_id},
+                )
+                if old_instance.project_id:
+                    ProjectActivity.objects.create(
+                        project_id=old_instance.project_id,
+                        activity_type=ProjectActivity.ActivityType.TASK_REMOVED,
+                        description=f"Task #{self.id} \"{self.title}\" removed",
+                        metadata={'task_id': self.id, 'task_uuid': str(self.uuid)},
+                    )
+                if self.project_id:
+                    ProjectActivity.objects.create(
+                        project_id=self.project_id,
+                        activity_type=ProjectActivity.ActivityType.TASK_ADDED,
+                        description=f"Task #{self.id} \"{self.title}\" added",
+                        metadata={'task_id': self.id, 'task_uuid': str(self.uuid)},
+                    )
+
             # Track status changes
             if old_instance.status != self.status:
                 TaskActivityStream.objects.create(
@@ -233,6 +428,14 @@ class TaskComment(models.Model):
         help_text="Internal note visible only to agents"
     )
     
+    # User mentions (@name)
+    mentions = models.ManyToManyField(
+        User,
+        related_name='mentioned_in_task_comments',
+        blank=True,
+        help_text="Users mentioned in this comment"
+    )
+
     # Reply metadata
     parent_comment = models.ForeignKey(
         'self',
@@ -299,6 +502,9 @@ class TaskActivityStream(models.Model):
         GROUP_CHANGED = 'group_changed', 'Group Changed'
         DUE_DATE_SET = 'due_date_set', 'Due Date Set'
         DUE_DATE_CHANGED = 'due_date_changed', 'Due Date Changed'
+        PROJECT_CHANGED = 'project_changed', 'Project Changed'
+        CONVERTED_TO_TICKET = 'converted_to_ticket', 'Converted to Ticket'
+        CONVERTED_TO_WORK_ITEM = 'converted_to_work_item', 'Converted to Work Item'
     
     task = models.ForeignKey(
         Task,

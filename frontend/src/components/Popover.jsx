@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { isInFloatingLayer } from '../utils/floatingLayer';
 
 // ─────────────────────────────────────────────
 //  CORE POPOVER — smart auto-placement
@@ -21,18 +22,34 @@ export function Popover({
   showArrow = true,
   placement = "auto", // "auto" | "right"
   onOpenChange,
+  onBeforeClose,
+  openOnHover = false,
+  hoverDelay = 200,
+  strategy = "absolute", // "absolute" | "fixed" (fixed escapes overflow-clipping parents)
 }) {
   const [open, setOpen] = useState(false);
   const [side, setSide] = useState("bottom");
   const [hAlign, setHAlign] = useState("center");
   const [vAlign, setVAlign] = useState("center"); // for horizontal placement
+  const [fixedPos, setFixedPos] = useState({ top: 0, left: 0, arrowTop: 16 });
   const wrapRef = useRef(null);
+  const hoverTimer = useRef(null);
+  const onBeforeCloseRef = useRef(onBeforeClose);
+  onBeforeCloseRef.current = onBeforeClose;
 
   const recalc = useCallback(() => {
     if (!wrapRef.current) return;
     const r = wrapRef.current.getBoundingClientRect();
     const vh = window.innerHeight;
     const vw = window.innerWidth;
+
+    if (placement === "right" && strategy === "fixed") {
+      const h = Math.min(maxHeight, vh - EDGE_MARGIN * 2);
+      const midY = r.top + r.height / 2;
+      const top = Math.max(EDGE_MARGIN, Math.min(r.top - 16, vh - h - EDGE_MARGIN));
+      setFixedPos({ top, left: r.right + GAP, arrowTop: Math.max(8, midY - top - 9) });
+      return;
+    }
 
     if (placement === "right") {
       // For right placement, calculate vertical alignment
@@ -48,16 +65,40 @@ export function Popover({
     const spaceBelow = vh - r.bottom - EDGE_MARGIN;
     const fits = (space) => space >= maxHeight + GAP;
 
-    if (fits(spaceBelow)) setSide("bottom");
-    else if (fits(spaceAbove)) setSide("top");
-    else setSide(spaceBelow >= spaceAbove ? "bottom" : "top");
+    let nextSide;
+    if (fits(spaceBelow)) nextSide = "bottom";
+    else if (fits(spaceAbove)) nextSide = "top";
+    else nextSide = spaceBelow >= spaceAbove ? "bottom" : "top";
+    setSide(nextSide);
 
     const triggerMidX = r.left + r.width / 2;
     const halfW = width / 2;
-    if (triggerMidX - halfW < EDGE_MARGIN) setHAlign("left");
-    else if (triggerMidX + halfW > vw - EDGE_MARGIN) setHAlign("right");
-    else setHAlign("center");
-  }, [width, maxHeight, placement]);
+    let nextHAlign;
+    if (triggerMidX - halfW < EDGE_MARGIN) nextHAlign = "left";
+    else if (triggerMidX + halfW > vw - EDGE_MARGIN) nextHAlign = "right";
+    else nextHAlign = "center";
+    setHAlign(nextHAlign);
+
+    if (strategy === "fixed") {
+      // Viewport coordinates so scrolling/clipping ancestors can't cut the panel off
+      const preferred = nextHAlign === "left" ? r.left : nextHAlign === "right" ? r.right - width : triggerMidX - halfW;
+      const left = Math.max(EDGE_MARGIN, Math.min(preferred, vw - width - EDGE_MARGIN));
+      setFixedPos({
+        left,
+        top: nextSide === "bottom" ? r.bottom + GAP : undefined,
+        bottom: nextSide === "top" ? vh - r.top + GAP : undefined,
+        arrowLeft: Math.max(12, Math.min(triggerMidX - left - 9, width - 30)),
+      });
+    }
+  }, [width, maxHeight, placement, strategy]);
+
+  // The panel stays mounted while closed (hidden), so align it on mount and resize
+  // too — a stale "center" alignment near the viewport edge makes the page scroll sideways.
+  useLayoutEffect(() => {
+    recalc();
+    window.addEventListener("resize", recalc);
+    return () => window.removeEventListener("resize", recalc);
+  }, [recalc]);
 
   useEffect(() => {
     if (!open) return;
@@ -71,12 +112,20 @@ export function Popover({
   }, [open, recalc]);
 
   useEffect(() => {
+    // Only listen while open: a closed popover must not treat every click on the
+    // page as "clicked outside" and fire onBeforeClose (which, via the unsaved
+    // changes guard, used to pop the discard dialog while another form was dirty).
+    if (!open) return undefined;
     const handler = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (isInFloatingLayer(e.target)) return;
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        if (onBeforeCloseRef.current) onBeforeCloseRef.current(() => setOpen(false));
+        else setOpen(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [open]);
 
   const close = () => {
     setOpen(false);
@@ -90,10 +139,32 @@ export function Popover({
     });
   };
 
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
+
+  const hoverProps = openOnHover
+    ? {
+        onMouseEnter: () => {
+          clearTimeout(hoverTimer.current);
+          hoverTimer.current = setTimeout(() => {
+            recalc();
+            setOpen(true);
+            onOpenChange?.(true);
+          }, hoverDelay);
+        },
+        onMouseLeave: () => {
+          clearTimeout(hoverTimer.current);
+          if (open) close();
+        },
+      }
+    : {};
+
   // Positioning for horizontal (right) placement
   if (placement === "right") {
-    const rightStyle = { left: `calc(100% + ${GAP}px)` };
-    const vAlignStyle = {
+    const isFixed = strategy === "fixed";
+    const rightStyle = isFixed
+      ? { left: fixedPos.left, top: fixedPos.top }
+      : { left: `calc(100% + ${GAP}px)` };
+    const vAlignStyle = isFixed ? {} : {
       top: { top: 0 },
       center: { top: "50%", marginTop: -(Math.min(maxHeight, 400) / 2) },
       bottom: { bottom: 0 },
@@ -102,18 +173,20 @@ export function Popover({
     const slideX = -6;
     
     // Arrow for right placement
-    const arrowVert = vAlign === "bottom"
+    const arrowVert = isFixed
+      ? { top: fixedPos.arrowTop, transform: "none" }
+      : vAlign === "bottom"
       ? { bottom: 16, top: "auto", transform: "none" }
       : vAlign === "top"
         ? { top: 16, transform: "none" }
         : { top: "50%", transform: "translateY(-50%)" };
     
     return (
-      <div ref={wrapRef} style={{ position: "relative", display: "inline-block" }} className={className}>
+      <div ref={wrapRef} style={{ position: "relative", display: "inline-block" }} className={className} {...hoverProps}>
         {trigger({ open, toggle, close })}
 
         <div style={{
-          position: "absolute",
+          position: isFixed ? "fixed" : "absolute",
           width: width,
           maxHeight: maxHeight,
           zIndex: 9999,
@@ -125,11 +198,11 @@ export function Popover({
           ...rightStyle,
           ...vAlignStyle,
         }}>
-          <div style={{
-            background: "#fff",
-            border: "1px solid #e5e7eb",
+          <div className="popover-panel" style={{
+            background: "var(--popover-bg, #fff)",
+            border: "1px solid var(--popover-border, #e5e7eb)",
             borderRadius: 12,
-            boxShadow: "0 4px 6px rgba(0,0,0,0.04), 0 16px 48px rgba(0,0,0,0.14)",
+            boxShadow: "var(--popover-shadow, 0 4px 6px rgba(0,0,0,0.04), 0 16px 48px rgba(0,0,0,0.14))",
             overflow: "hidden",
             maxHeight: maxHeight,
             overflowY: "auto",
@@ -148,7 +221,7 @@ export function Popover({
                 borderTop: "9px solid transparent",
                 borderBottom: "9px solid transparent",
                 left: -9,
-                borderRight: "9px solid #e5e7eb",
+                borderRight: "9px solid var(--popover-border, #e5e7eb)",
                 ...arrowVert,
               }} />
               {/* Fill arrow (inner) */}
@@ -160,7 +233,7 @@ export function Popover({
                 borderTop: "8px solid transparent",
                 borderBottom: "8px solid transparent",
                 left: -7,
-                borderRight: "8px solid #fff",
+                borderRight: "8px solid var(--popover-bg, #fff)",
                 ...arrowVert,
               }} />
             </>
@@ -171,11 +244,14 @@ export function Popover({
   }
 
   // Default vertical (top/bottom) placement
-  const vertStyle = side === "top"
-    ? { bottom: `calc(100% + ${GAP}px)` }
-    : { top: `calc(100% + ${GAP}px)` };
+  const isFixedVert = strategy === "fixed";
+  const vertStyle = isFixedVert
+    ? (side === "top" ? { bottom: fixedPos.bottom } : { top: fixedPos.top })
+    : side === "top"
+      ? { bottom: `calc(100% + ${GAP}px)` }
+      : { top: `calc(100% + ${GAP}px)` };
 
-  const horizStyle = {
+  const horizStyle = isFixedVert ? { left: fixedPos.left } : {
     left: { left: 0 },
     center: { left: "50%", marginLeft: -(width / 2) },
     right: { right: 0 },
@@ -184,18 +260,20 @@ export function Popover({
   const slideY = side === "top" ? 6 : -6;
 
   // Arrow positioning - attached to body
-  const arrowHoriz = hAlign === "right"
+  const arrowHoriz = isFixedVert
+    ? { left: fixedPos.arrowLeft, transform: "none" }
+    : hAlign === "right"
     ? { right: 16, left: "auto", transform: "none" }
     : hAlign === "left"
       ? { left: 16, transform: "none" }
       : { left: "50%", transform: "translateX(-50%)" };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", display: "inline-block" }} className={className}>
+    <div ref={wrapRef} style={{ position: "relative", display: "inline-block" }} className={className} {...hoverProps}>
       {trigger({ open, toggle, close })}
 
       <div style={{
-        position: "absolute",
+        position: isFixedVert ? "fixed" : "absolute",
         width: width,
         zIndex: 9999,
         opacity: open ? 1 : 0,
@@ -206,11 +284,11 @@ export function Popover({
         ...vertStyle,
         ...horizStyle,
       }}>
-        <div style={{
-          background: "#fff",
-          border: "1px solid #e5e7eb",
+        <div className="popover-panel" style={{
+          background: "var(--popover-bg, #fff)",
+          border: "1px solid var(--popover-border, #e5e7eb)",
           borderRadius: 12,
-          boxShadow: "0 4px 6px rgba(0,0,0,0.04), 0 16px 48px rgba(0,0,0,0.14)",
+          boxShadow: "var(--popover-shadow, 0 4px 6px rgba(0,0,0,0.04), 0 16px 48px rgba(0,0,0,0.14))",
           overflow: "hidden",
         }}>
           {typeof children === "function" ? children({ close, open }) : children}
@@ -227,8 +305,8 @@ export function Popover({
               borderLeft: "9px solid transparent",
               borderRight: "9px solid transparent",
               ...(side === "top" 
-                ? { bottom: -9, borderTop: "9px solid #e5e7eb" }
-                : { top: -9, borderBottom: "9px solid #e5e7eb" }
+                ? { bottom: -9, borderTop: "9px solid var(--popover-border, #e5e7eb)" }
+                : { top: -9, borderBottom: "9px solid var(--popover-border, #e5e7eb)" }
               ),
               ...arrowHoriz,
             }} />
@@ -241,8 +319,8 @@ export function Popover({
               borderLeft: "8px solid transparent",
               borderRight: "8px solid transparent",
               ...(side === "top" 
-                ? { bottom: -7, borderTop: "8px solid #fff" }
-                : { top: -7, borderBottom: "8px solid #fff" }
+                ? { bottom: -7, borderTop: "8px solid var(--popover-bg, #fff)" }
+                : { top: -7, borderBottom: "8px solid var(--popover-bg, #fff)" }
               ),
               ...arrowHoriz,
             }} />

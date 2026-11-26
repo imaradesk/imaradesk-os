@@ -2,15 +2,27 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Link, router } from '@inertiajs/react'
 import toast from 'react-hot-toast'
 import Avatar from '../../../components/Avatar'
-import TicketStatusStepper from '../TicketStatusStepper'
-import Select from '../SearchableSelect'
+import {
+  ArrowUpRight, MessagesSquare, Paperclip, Activity, Timer, Lock, UserCircle2, Users, CircleDot, Shapes, Mail, Tag, Eye, Building2,
+  PanelRightClose, PanelRightOpen,
+} from 'lucide-react'
+import { StatusTrack, TICKET_TYPES } from './ui'
+import StatusMenu from './StatusMenu'
+import { PriorityIcon, priorityOptionIcon, MiniAvatar } from '../tasks/ui'
+import FieldPopover from '../detail/FieldPopover'
+import { DetailRow, TagsField, WatchersField } from '../detail/DetailUI'
+import { PRIORITIES } from '../tasks/constants'
 import { COLORS } from '../../constants/theme'
 import AttachmentsTab from './AttachmentsTab'
 import ConversationTab from './ConversationTab'
-import NotesTab from './NotesTab'
+import SLATab from './SLATab'
+import Tabs from '../Tabs'
+import RichEditor, { isRichTextEmpty } from '../RichEditor'
 import ActivityTimeline from '../../../components/ActivityTimeline'
-import { AttachmentDrawer } from './TicketModals'
+import { AttachmentModal } from './TicketModals'
 import api from '../../../utils/axios'
+import { useUnsavedChanges } from '../../context/UnsavedChangesContext'
+import { isInFloatingLayer } from '../../../utils/floatingLayer'
 import {
   GlobalOutlined,
   MailOutlined,
@@ -43,39 +55,56 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
   const [activities, setActivities] = useState([])
   const [users, setUsers] = useState([])
   const [groups, setGroups] = useState([])
+  const [slaData, setSlaData] = useState(null)
   const [activeTab, setActiveTab] = useState('conversation')
+  const [detailsOpen, setDetailsOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem('ticketDetailsPaneOpen')
+      if (saved != null) return saved === '1'
+    } catch { /* storage unavailable */ }
+    return typeof window === 'undefined' || window.innerWidth >= 1280
+  })
   const [newComment, setNewComment] = useState('')
   const [commentInternal, setCommentInternal] = useState(false)
   const [processing, setProcessing] = useState(false)
-  const textareaRef = useRef(null)
+  const [commentMentions, setCommentMentions] = useState([])
   const [showSendDropdown, setShowSendDropdown] = useState(false)
   const sendDropdownRef = useRef(null)
-  const [editingField, setEditingField] = useState(null)
+  // Composer stays a bare placeholder until focused, like the description field
+  const [composerFocused, setComposerFocused] = useState(false)
+  const composerEditorRef = useRef(null)
+  const composerBlurTimer = useRef(null)
+
+  useEffect(() => () => clearTimeout(composerBlurTimer.current), [])
+
+  useEffect(() => {
+    try { localStorage.setItem('ticketDetailsPaneOpen', detailsOpen ? '1' : '0') } catch { /* storage unavailable */ }
+  }, [detailsOpen])
 
   // Read-only when ticket is closed, resolved, or merged
   const computedStatus = ticket?.computed_status || ticket?.status
   const isReadOnly = computedStatus === 'closed' || computedStatus === 'resolved' || ticket?.is_merged
 
-  const handleEditClick = (field) => {
-    if (isReadOnly) return
-    setEditingField(field)
-  }
-  
+  const isMerged = !!ticket?.is_merged
+
   // File attachment state
   const [commentFiles, setCommentFiles] = useState([])
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
   
   // Attachment drawer state
-  const [showAttachmentDrawer, setShowAttachmentDrawer] = useState(false)
+  const [showAttachmentModal, setShowAttachmentModal] = useState(false)
   const [selectedAttachmentFile, setSelectedAttachmentFile] = useState(null)
   const [isAttachmentInternal, setIsAttachmentInternal] = useState(false)
   const [attachmentUploading, setAttachmentUploading] = useState(false)
 
+  const composerEmpty = isRichTextEmpty(newComment)
+  useUnsavedChanges(!composerEmpty || commentFiles.length > 0)
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (sendDropdownRef.current && !sendDropdownRef.current.contains(event.target)) {
+      if (!isInFloatingLayer(event.target) && sendDropdownRef.current && !sendDropdownRef.current.contains(event.target)) {
         setShowSendDropdown(false)
       }
     }
@@ -96,6 +125,8 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
         setActivities(res.data.activities || [])
         setUsers(res.data.users || [])
         setGroups(res.data.groups || [])
+        setSlaData(res.data.sla || null)
+        if (!res.data.sla) setActiveTab((tab) => (tab === 'sla' ? 'conversation' : tab))
         setLoading(false)
       })
       .catch(err => {
@@ -103,6 +134,15 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
         toast.error('Failed to load ticket details')
         setLoading(false)
       })
+  }, [ticketUuid])
+
+  // Start with a fresh reply when switching tickets
+  useEffect(() => {
+    setNewComment('')
+    setCommentMentions([])
+    setCommentFiles([])
+    setCommentInternal(false)
+    setComposerFocused(false)
   }, [ticketUuid])
 
   // Get CSRF token
@@ -145,6 +185,8 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
       }
     }
     if (files.length > 0) {
+      e.preventDefault()
+      e.stopPropagation()
       addFiles(files)
     }
   }
@@ -216,12 +258,12 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
       })
 
       toast.success('File attached successfully')
-      setShowAttachmentDrawer(false)
+      setShowAttachmentModal(false)
       setSelectedAttachmentFile(null)
       setIsAttachmentInternal(false)
       
       // Refresh attachments
-      const response = await api.get(`/tickets/${ticketUuid}/detail/`)
+      const response = await api.get(`/tickets/${ticketUuid}/detail-api/`)
       setAttachments(response.data.attachments || [])
     } catch (error) {
       toast.error(error.message || 'Failed to upload attachment')
@@ -230,9 +272,22 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
     }
   }
 
+  // Reload the conversation without leaving the split view
+  const refreshConversation = async () => {
+    try {
+      const res = await api.get(`/tickets/${ticketUuid}/detail-api/`)
+      setComments(res.data.comments || [])
+      setAttachments(res.data.attachments || [])
+      setActivities(res.data.activities || [])
+    } catch {
+      toast.error('Failed to refresh conversation')
+    }
+  }
+
   // Submit comment
   const handleSubmitComment = async () => {
-    if (!newComment.trim() && commentFiles.length === 0) {
+    const commentEmpty = isRichTextEmpty(newComment)
+    if (commentEmpty && commentFiles.length === 0) {
       toast.error('Please enter a comment or attach files')
       return
     }
@@ -253,8 +308,9 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
 
       // Submit comment with attachments
       await api.post(`/tickets/${ticketUuid}/comment/`, {
-        message: newComment,
+        message: commentEmpty ? '' : newComment,
         is_internal: commentInternal,
+        mentions: commentMentions,
         attachments: uploadedAttachments
       })
 
@@ -262,11 +318,9 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
       setNewComment('')
       setCommentInternal(false)
       setCommentFiles([])
+      setCommentMentions([])
       
-      // Refresh ticket data
-      const refreshRes = await api.get(`/tickets/${ticketUuid}/detail-api/`)
-      setComments(refreshRes.data.comments || [])
-      setAttachments(refreshRes.data.attachments || [])
+      await refreshConversation()
     } catch (error) {
       toast.error('Failed to send reply')
     } finally {
@@ -274,12 +328,23 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
     }
   }
 
+  // Collapsed until focused, or while it holds content / attachments
+  const composerExpanded = composerFocused || !isRichTextEmpty(newComment) || commentFiles.length > 0 || processing
+  const focusComposer = () => {
+    clearTimeout(composerBlurTimer.current)
+    setComposerFocused(true)
+  }
+  const blurComposer = () => {
+    clearTimeout(composerBlurTimer.current)
+    // Let toolbar clicks land before collapsing
+    composerBlurTimer.current = setTimeout(() => setComposerFocused(false), 150)
+  }
+
   // Update ticket field
   const updateField = (field, value) => {
     api.post(`/tickets/${ticketUuid}/update/`, { [field]: value })
       .then(() => {
         toast.success('Ticket updated')
-        setEditingField(null)
         // Refresh ticket data
         return api.get(`/tickets/${ticketUuid}/detail-api/`)
       })
@@ -292,16 +357,29 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
   }
 
   // Update ticket status
-  const updateStatus = (newStatus) => {
+  const updateStatus = async (picked) => {
+    // "resume" moves an on-hold ticket back to In Progress and restarts its SLA clock
+    const newStatus = picked === 'resume' ? 'in_progress' : picked
+    const isReopening = isReadOnly && !ticket?.is_merged
     const formData = new URLSearchParams()
     formData.append('status', newStatus)
-    
+
+    try {
+      if (picked === 'resume' && ticket?.sla_info?.is_on_hold) {
+        await api.post(`/sla/api/tickets/${ticketUuid}/sla/resume/`)
+      } else if (newStatus === 'pending' && ticket?.sla_info && !ticket.sla_info.is_on_hold) {
+        await api.post(`/sla/api/tickets/${ticketUuid}/sla/hold/`, { reason: 'Ticket placed on hold' })
+      }
+    } catch {
+      toast.error('Failed to update the SLA timer')
+      return
+    }
+
     api.post(`/tickets/${ticketUuid}/status/`, formData, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
       .then(() => {
-        toast.success('Status updated')
-        setEditingField(null)
+        toast.success(picked === 'resume' ? 'Ticket resumed' : isReopening ? 'Ticket reopened' : 'Status updated')
         // Refresh ticket data
         return api.get(`/tickets/${ticketUuid}/detail-api/`)
       })
@@ -353,20 +431,9 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
     }
   }
 
-  // Tab styling
-  const getTabClass = (tabName) => {
-    const isActive = activeTab === tabName
-    const base = 'px-3 py-2 text-xs font-medium border-b-2'
-    return `${base} ${
-      isActive
-        ? 'border-[#4a154b] text-[#4a154b]'
-        : 'border-transparent text-gray-500 hover:text-gray-700'
-    }`
-  }
-
   if (loading) {
     return (
-      <div className="flex-1 flex flex-col bg-gray-50">
+      <div className="flex-1 min-w-0 flex flex-col bg-gray-50">
         {/* Header Skeleton */}
         <div className="bg-white border-b border-gray-200 px-4 py-3">
           <div className="flex items-center justify-between">
@@ -398,55 +465,67 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
           </div>
         </div>
 
-        {/* Details Skeleton */}
-        <div className="bg-white border-b border-gray-200 px-4 py-3">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="flex items-center gap-2">
-                <div className="h-3 w-14 bg-gray-200 rounded animate-pulse"></div>
-                <div className="h-4 w-20 bg-gray-200 rounded animate-pulse"></div>
+        {/* Tabs + Details Skeleton */}
+        <div className="flex flex-1 min-h-0">
+          {/* Left column */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            {/* Tabs Skeleton */}
+            <div className="bg-white border-b border-gray-200">
+              <div className="flex gap-4 px-4">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="h-8 w-24 bg-gray-200 rounded animate-pulse my-2"></div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
+            </div>
 
-        {/* Tabs Skeleton */}
-        <div className="bg-white border-b border-gray-200">
-          <div className="flex gap-4 px-4">
-            {[1, 2, 3, 4].map(i => (
-              <div key={i} className="h-8 w-24 bg-gray-200 rounded animate-pulse my-2"></div>
-            ))}
-          </div>
-        </div>
-
-        {/* Content Skeleton */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="flex items-start gap-3">
-              <div className="w-6 h-6 rounded-full bg-gray-200 animate-pulse flex-shrink-0"></div>
-              <div className="flex-1 space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="h-4 w-24 bg-gray-200 rounded animate-pulse"></div>
-                  <div className="h-3 w-16 bg-gray-200 rounded animate-pulse"></div>
+            {/* Content Skeleton */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-gray-200 animate-pulse flex-shrink-0"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-24 bg-gray-200 rounded animate-pulse"></div>
+                      <div className="h-3 w-16 bg-gray-200 rounded animate-pulse"></div>
+                    </div>
+                    <div className="h-3 w-32 bg-gray-200 rounded animate-pulse"></div>
+                  </div>
                 </div>
-                <div className="h-3 w-32 bg-gray-200 rounded animate-pulse"></div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {/* Reply Box Skeleton */}
-        <div className="bg-white border-t border-gray-200 p-4">
-          <div className="border border-gray-200 rounded-lg p-3">
-            <div className="h-16 bg-gray-100 rounded animate-pulse mb-3"></div>
-            <div className="flex justify-between items-center">
-              <div className="flex gap-3">
-                <div className="w-5 h-5 bg-gray-200 rounded animate-pulse"></div>
-                <div className="w-5 h-5 bg-gray-200 rounded animate-pulse"></div>
+            {/* Reply Box Skeleton */}
+            <div className="bg-white border-t border-gray-200 p-4">
+              <div className="border border-gray-200 rounded-lg p-3">
+                <div className="h-16 bg-gray-100 rounded animate-pulse mb-3"></div>
+                <div className="flex justify-between items-center">
+                  <div className="flex gap-3">
+                    <div className="w-5 h-5 bg-gray-200 rounded animate-pulse"></div>
+                    <div className="w-5 h-5 bg-gray-200 rounded animate-pulse"></div>
+                  </div>
+                  <div className="h-8 w-24 bg-gray-200 rounded-md animate-pulse"></div>
+                </div>
               </div>
-              <div className="h-8 w-24 bg-gray-200 rounded-md animate-pulse"></div>
             </div>
           </div>
+
+          {/* Details pane skeleton */}
+          <aside className="flex w-64 2xl:w-72 flex-shrink-0 flex-col border-l border-gray-200 bg-white">
+            <div className="h-11 px-3 border-b border-gray-200 bg-gray-50/50 flex items-center justify-between flex-shrink-0">
+              <div className="h-3 w-16 bg-gray-200 rounded animate-pulse"></div>
+              <div className="w-6 h-6 rounded bg-gray-200 animate-pulse"></div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 py-1.5">
+              <div className="divide-y divide-gray-100">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                  <div key={i} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="h-3 w-16 bg-gray-200 rounded animate-pulse flex-shrink-0"></div>
+                    <div className="h-5 flex-1 bg-gray-100 rounded animate-pulse"></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
     )
@@ -467,102 +546,218 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
     )
   }
 
-  return (
-    <div className="flex-1 flex flex-col bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-sm font-medium text-[#4a154b]">#{ticket.ticket_number}</span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                ticket.computed_status === 'new' ? 'bg-purple-100 text-purple-700' :
-                ticket.computed_status === 'open' ? 'bg-blue-100 text-blue-700' :
-                ticket.computed_status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
-                ticket.computed_status === 'pending' ? 'bg-orange-100 text-orange-700' :
-                ticket.computed_status === 'resolved' ? 'bg-green-100 text-green-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>
-                {ticket.computed_status?.replace('_', ' ')}
-              </span>
-              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                ticket.priority === 'urgent' ? 'bg-red-100 text-red-700' :
-                ticket.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-                ticket.priority === 'normal' ? 'bg-blue-100 text-blue-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>
-                {ticket.priority}
-              </span>
+  const detailRows = [
+    {
+      key: 'assignee',
+      node: (
+        <DetailRow stacked icon={UserCircle2} label="Assignee">
+          <FieldPopover
+            label="Assignee"
+            description="Who is working on this ticket"
+            value={ticket.assignee?.id || ''}
+            options={users}
+            optionIcon={(o) => <MiniAvatar user={o} size="w-5 h-5 text-[9px]" />}
+            emptyLabel="Unassigned"
+            searchable
+            disabled={isReadOnly}
+            triggerClassName="w-full"
+            variant="field"
+            onPick={(value) => updateField('assignee', value || null)}
+          >
+            {ticket.assignee ? (
+              <>
+                <MiniAvatar user={ticket.assignee} size="w-5 h-5 text-[9px]" />
+                <span className="text-sm text-gray-900 truncate">{ticket.assignee.name}</span>
+              </>
+            ) : (
+              <span className="text-sm text-gray-400">Unassigned</span>
+            )}
+          </FieldPopover>
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'group',
+      node: (
+        <DetailRow stacked icon={Users} label="Group">
+          <FieldPopover
+            label="Group"
+            description="Team responsible for this ticket"
+            value={ticket.group?.id || ''}
+            options={groups}
+            emptyLabel="None"
+            searchable
+            disabled={isReadOnly}
+            triggerClassName="w-full"
+            variant="field"
+            onPick={(value) => updateField('group', value || null)}
+          >
+            <span className={`text-sm truncate ${ticket.group?.name ? 'text-gray-900' : 'text-gray-400'}`}>
+              {ticket.group?.name || 'None'}
+            </span>
+          </FieldPopover>
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'priority',
+      node: (
+        <DetailRow stacked icon={CircleDot} label="Priority">
+          <FieldPopover
+            label="Priority"
+            description="Change the ticket priority"
+            value={ticket.priority || 'normal'}
+            options={PRIORITIES}
+            optionIcon={priorityOptionIcon}
+            disabled={isReadOnly}
+            triggerClassName="w-full"
+            variant="field"
+            width={240}
+            onPick={(value) => updateField('priority', value)}
+          >
+            <PriorityIcon priority={ticket.priority} />
+            <span className="text-sm text-gray-900 truncate">{ticket.priority_display || ticket.priority}</span>
+          </FieldPopover>
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'type',
+      node: (
+        <DetailRow stacked icon={Shapes} label="Type">
+          <FieldPopover
+            label="Type"
+            description="What kind of ticket this is"
+            value={ticket.type || 'question'}
+            options={TICKET_TYPES}
+            disabled={isReadOnly}
+            triggerClassName="w-full"
+            variant="field"
+            width={240}
+            onPick={(value) => updateField('type', value)}
+          >
+            <span className="text-sm text-gray-900 truncate">{ticket.type_display || ticket.type || 'Question'}</span>
+          </FieldPopover>
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'requester',
+      node: (
+        <DetailRow stacked icon={Mail} label="Requester">
+          <div className="px-2 py-1.5 min-w-0">
+            <div className="flex items-center gap-2 text-sm text-gray-900">
+              <MiniAvatar user={ticket.requester} size="w-6 h-6 text-[10px]" />
+              <span className="truncate">{ticket.requester?.name || 'Unknown'}</span>
+              {ticket.is_guest_ticket && <span className="px-1.5 rounded bg-gray-100 text-[10px] font-medium text-gray-500">Guest</span>}
             </div>
-            <h2 className="text-base font-semibold text-gray-900 truncate">{ticket.title}</h2>
+            {ticket.requester?.email && (
+              <a href={`mailto:${ticket.requester.email}`} className="mt-0.5 block text-xs text-gray-500 hover:text-[#0B3D26] truncate">{ticket.requester.email}</a>
+            )}
           </div>
-          <div className="flex items-center gap-2 ml-4">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <div className="w-6 h-6 rounded-full bg-[#4a154b]/10 flex items-center justify-center text-[#4a154b] font-medium text-xs">
-                {ticket.assignee?.name?.charAt(0)?.toUpperCase() || '?'}
-              </div>
-              <span className="hidden sm:inline">{ticket.assignee?.name || 'Unassigned'}</span>
-            </div>
-            <Link
-              href={`/tickets/${ticket.uuid}/`}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-[#4a154b] rounded-md hover:bg-[#3a1039] transition-colors"
-            >
-              Open Full View
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      {/* Status Stepper */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3">
-        <div className="flex items-center gap-4 mb-2">
-          <span className="text-xs text-gray-500">Status:</span>
-          {editingField === 'status' ? (
-            <div className="w-40">
-              <Select
-                value={ticket.computed_status || ticket.status || 'new'}
-                onChange={(value) => {
-                  updateStatus(value)
-                  setEditingField(null)
-                }}
-                options={[
-                  { id: 'new', name: 'New' },
-                  { id: 'open', name: 'Open' },
-                  { id: 'in_progress', name: 'In Progress' },
-                  { id: 'pending', name: 'On Hold' },
-                  { id: 'resolved', name: 'Resolved' },
-                ]}
-                placeholder="Select status"
-                allowClear={false}
-                className="text-sm"
-              />
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 group">
-              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                ticket.computed_status === 'new' ? 'bg-purple-100 text-purple-700' :
-                ticket.computed_status === 'open' ? 'bg-blue-100 text-blue-700' :
-                ticket.computed_status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
-                ticket.computed_status === 'pending' ? 'bg-orange-100 text-orange-700' :
-                ticket.computed_status === 'resolved' ? 'bg-green-100 text-green-700' :
-                'bg-gray-100 text-gray-600'
-              }`}>
-                {ticket.computed_status?.replace('_', ' ') || ticket.status?.replace('_', ' ')}
-              </span>
-              {!isReadOnly && (
-                <button
-                  onClick={() => handleEditClick('status')}
-                  className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
+        </DetailRow>
+      ),
+    },
+    ...(ticket.department ? [{
+      key: 'department',
+      node: (
+        <DetailRow stacked icon={Building2} label="Department">
+          <span className="block px-2 py-1.5 text-sm text-gray-900 truncate">{ticket.department}</span>
+        </DetailRow>
+      ),
+    }] : []),
+    {
+      key: 'channel',
+      node: (
+        <DetailRow stacked icon={GlobalOutlined} label="Channel">
+          <div className="flex items-center gap-1.5 px-2 py-1.5">
+            {ticket.channel ? (
+              <>
+                <span
+                  className="w-5 h-5 flex items-center justify-center rounded text-xs"
+                  style={{ backgroundColor: ticket.channel.icon_bg || '#f3f4f6', color: ticket.channel.icon_color || '#6b7280' }}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                </button>
-              )}
+                  {(() => {
+                    const IconComp = CHANNEL_ICON_MAP[ticket.channel.icon]
+                    return IconComp ? <IconComp /> : <GlobalOutlined />
+                  })()}
+                </span>
+                <span className="text-sm text-gray-900">{ticket.channel.name}</span>
+              </>
+            ) : (
+              <>
+                <span className="w-5 h-5 flex items-center justify-center rounded bg-blue-100 text-blue-600 text-xs">🌐</span>
+                <span className="text-sm text-gray-900">{ticket.source || 'Web'}</span>
+              </>
+            )}
+          </div>
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'tags',
+      node: (
+        <DetailRow stacked icon={Tag} label="Tags">
+          <TagsField
+            tags={ticket.tags || []}
+            readOnly={isReadOnly}
+            onSave={(tags) => updateField('tags', tags)}
+          />
+        </DetailRow>
+      ),
+    },
+    {
+      key: 'watchers',
+      node: (
+        <DetailRow stacked icon={Eye} label="Watchers">
+          <WatchersField
+            watchers={ticket.watchers || []}
+            users={users}
+            readOnly={isMerged}
+            onSave={(ids) => updateField('watchers', ids)}
+          />
+        </DetailRow>
+      ),
+    },
+  ]
+
+  return (
+    <div className="flex-1 min-w-0 flex flex-col bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-5 py-3.5">
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span className="tabular-nums">{ticket.ticket_number}</span>
+              <span className="text-gray-300">·</span>
+              <PriorityIcon priority={ticket.priority} showLabel />
             </div>
-          )}
+            <h2 className="mt-1 text-base font-semibold text-gray-900 leading-snug line-clamp-2">{ticket.title}</h2>
+          </div>
+          <Link
+            href={`/tickets/${ticket.uuid}/`}
+            className="h-8 px-3 inline-flex items-center gap-1.5 text-xs font-medium rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors flex-shrink-0"
+          >
+            Open <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
         </div>
-        <TicketStatusStepper currentStatus={ticket.computed_status || ticket.status} />
+
+        <div className="mt-3 flex items-center gap-3">
+          <StatusMenu
+            compact
+            status={computedStatus || 'new'}
+            onPick={updateStatus}
+            disabled={!!ticket.is_merged}
+          />
+          <div className="flex-1" />
+          <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 min-w-0">
+            <MiniAvatar user={ticket.assignee} />
+            <span className="hidden sm:inline truncate max-w-[8rem]">{ticket.assignee?.name || 'Unassigned'}</span>
+          </span>
+        </div>
+        <div className="mt-3">
+          <StatusTrack status={ticket.computed_status || ticket.status} compact />
+        </div>
       </div>
 
       {/* SLA Info */}
@@ -629,528 +824,279 @@ export default function TicketDetailPanel({ ticketUuid, onClose, onTicketUpdate 
         </div>
       )}
 
-      {/* Ticket Details */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-          {/* Priority */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Priority:</span>
-            {editingField === 'priority' ? (
-              <div className="w-32">
-                <Select
-                  value={ticket.priority || 'normal'}
-                  onChange={(value) => {
-                    updateField('priority', value)
-                    setEditingField(null)
-                  }}
-                  options={[
-                    { id: 'low', name: 'Low' },
-                    { id: 'normal', name: 'Normal' },
-                    { id: 'high', name: 'High' },
-                    { id: 'urgent', name: 'Urgent' },
-                  ]}
-                  placeholder="Select priority"
-                  allowClear={false}
-                  className="text-sm"
-                />
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 group">
-                <span className={`font-medium ${
-                  ticket.priority === 'urgent' ? 'text-red-600' :
-                  ticket.priority === 'high' ? 'text-orange-600' :
-                  ticket.priority === 'normal' ? 'text-blue-600' : 'text-gray-600'
-                }`}>
-                  {ticket.priority_display || ticket.priority}
-                </span>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('priority')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Assignee */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Assignee:</span>
-            {editingField === 'assignee' ? (
-              <div className="w-40">
-                <Select
-                  value={ticket.assignee?.id || ''}
-                  onChange={(value) => {
-                    updateField('assignee', value || null)
-                    setEditingField(null)
-                  }}
-                  options={users}
-                  placeholder="Unassigned"
-                  searchable={true}
-                  className="text-sm"
-                />
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 group">
-                <span className="font-medium text-gray-900 truncate max-w-[100px]">
-                  {ticket.assignee?.name || 'Unassigned'}
-                </span>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('assignee')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Group */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Group:</span>
-            {editingField === 'group' ? (
-              <div className="w-40">
-                <Select
-                  value={ticket.group?.id || ''}
-                  onChange={(value) => {
-                    updateField('group', value || null)
-                    setEditingField(null)
-                  }}
-                  options={groups}
-                  placeholder="None"
-                  searchable={true}
-                  className="text-sm"
-                />
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 group">
-                <span className="font-medium text-gray-900 truncate max-w-[100px]">
-                  {ticket.group?.name || 'None'}
-                </span>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('group')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Type */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Type:</span>
-            {editingField === 'type' ? (
-              <div className="w-32">
-                <Select
-                  value={ticket.type || 'question'}
-                  onChange={(value) => {
-                    updateField('type', value)
-                    setEditingField(null)
-                  }}
-                  options={[
-                    { id: 'question', name: 'Question' },
-                    { id: 'incident', name: 'Incident' },
-                    { id: 'problem', name: 'Problem' },
-                    { id: 'task', name: 'Task' },
-                  ]}
-                  placeholder="Select type"
-                  allowClear={false}
-                  className="text-sm"
-                />
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 group">
-                <span className="font-medium text-gray-900">
-                  {ticket.type_display || ticket.type || 'Question'}
-                </span>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('type')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Watchers */}
-          <div className="flex items-center gap-2 relative">
-            <span className="text-gray-500">Watchers:</span>
-            {editingField === 'watchers' ? (
-              <div className="absolute left-0 top-full z-50 mt-1 bg-white border border-gray-200 rounded shadow-lg p-2 max-h-40 overflow-y-auto min-w-[180px]">
-                {users.map(user => (
-                  <label key={user.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 px-2 py-1 rounded text-xs">
-                    <input
-                      type="checkbox"
-                      checked={ticket.watchers?.some(w => w.id === user.id)}
-                      onChange={(e) => {
-                        const currentWatchers = ticket.watchers?.map(w => w.id) || []
-                        let newWatchers
-                        if (e.target.checked) {
-                          newWatchers = [...currentWatchers, user.id]
-                        } else {
-                          newWatchers = currentWatchers.filter(id => id !== user.id)
-                        }
-                        updateField('watchers', newWatchers)
-                      }}
-                      className="rounded border-gray-300 text-[#4a154b] focus:ring-[#4a154b]"
-                    />
-                    <span className="text-gray-900">{user.name}</span>
-                  </label>
-                ))}
-                <button
-                  onClick={() => setEditingField(null)}
-                  className="mt-2 w-full text-xs text-[#4a154b] hover:underline"
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 group">
-                {ticket.watchers && ticket.watchers.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {ticket.watchers.slice(0, 2).map((w, i) => (
-                      <span key={i} className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">
-                        {w.name?.split(' ')[0]}
-                      </span>
-                    ))}
-                    {ticket.watchers.length > 2 && (
-                      <span className="text-xs text-gray-500">+{ticket.watchers.length - 2}</span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-gray-400 text-xs">None</span>
-                )}
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('watchers')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Tags */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Tags:</span>
-            {editingField === 'tags' ? (
-              <input
-                type="text"
-                autoFocus
-                defaultValue={ticket.tags?.join(', ') || ''}
-                onBlur={(e) => {
-                  const tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean)
-                  updateField('tags', tags)
-                }}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    e.target.blur()
-                  }
-                }}
-                placeholder="Tags, comma separated"
-                className="text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-[#4a154b] max-w-[150px]"
-              />
-            ) : (
-              <div className="flex items-center gap-1 group">
-                {ticket.tags && ticket.tags.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {ticket.tags.slice(0, 2).map((tag, i) => (
-                      <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-700 text-xs rounded">
-                        {tag}
-                      </span>
-                    ))}
-                    {ticket.tags.length > 2 && (
-                      <span className="text-xs text-gray-500">+{ticket.tags.length - 2}</span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-gray-400 text-xs">None</span>
-                )}
-                {!isReadOnly && (
-                  <button
-                    onClick={() => handleEditClick('tags')}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-[#4a154b] transition-opacity"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Channel/Source */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-500">Channel:</span>
-            <div className="flex items-center gap-1.5">
-              {ticket.channel ? (
-                <>
-                  <span 
-                    className="w-5 h-5 flex items-center justify-center rounded text-xs"
-                    style={{ backgroundColor: ticket.channel.icon_bg || '#f3f4f6', color: ticket.channel.icon_color || '#6b7280' }}
-                  >
-                    {(() => {
-                      const IconComp = CHANNEL_ICON_MAP[ticket.channel.icon]
-                      return IconComp ? <IconComp /> : <GlobalOutlined />
-                    })()}
-                  </span>
-                  <span className="font-medium text-gray-900">{ticket.channel.name}</span>
-                </>
-              ) : (
-                <>
-                  <span className="w-5 h-5 flex items-center justify-center rounded bg-blue-100 text-blue-600 text-xs">🌐</span>
-                  <span className="font-medium text-gray-900">{ticket.source || 'Web'}</span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="flex">
-          <button onClick={() => setActiveTab('conversation')} className={getTabClass('conversation')}>
-            Conversation ({comments.filter(c => !c.is_internal).length})
-          </button>
-          <button onClick={() => setActiveTab('notes')} className={getTabClass('notes')}>
-            Notes ({comments.filter(c => c.is_internal).length})
-          </button>
-          <button onClick={() => setActiveTab('attachments')} className={getTabClass('attachments')}>
-            Attachments ({attachments.length})
-          </button>
-          <button onClick={() => setActiveTab('activity')} className={getTabClass('activity')}>
-            Activity ({activities.length})
-          </button>
-        </div>
-      </div>
-
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'conversation' && (
-          <ConversationTab
-            ticket={ticket}
-            comments={comments}
-            hideForm
-          />
-        )}
-
-        {activeTab === 'notes' && (
-          <NotesTab
-            comments={comments}
-            hideForm
-          />
-        )}
-
-        {activeTab === 'attachments' && (
-          <AttachmentsTab 
-            attachments={attachments} 
-            onAddAttachment={() => setShowAttachmentDrawer(true)}
-          />
-        )}
-
-        {activeTab === 'activity' && (
-          <ActivityTimeline activities={activities} />
-        )}
-      </div>
-
-      {/* Reply Box */}
-      <div className="bg-white border-t border-gray-200 p-4">
-        {/* Hidden file input */}
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileSelect}
-          className="hidden"
-          multiple
-        />
-        
-        <div 
-          className={`border rounded-lg overflow-visible relative transition-colors ${
-            isDragging ? 'border-[#4a154b] bg-purple-50' : 'border-gray-200'
-          }`}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          {/* Drag overlay */}
-          {isDragging && (
-            <div className="absolute inset-0 bg-purple-50/90 flex items-center justify-center z-10 rounded-lg">
-              <div className="text-center">
-                <svg className="w-8 h-8 text-[#4a154b] mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                <p className="text-sm font-medium text-[#4a154b]">Drop files here</p>
-              </div>
-            </div>
-          )}
-          
-          {/* Input area */}
-          <div className="p-3">
-            <textarea
-              ref={textareaRef}
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              onPaste={handlePaste}
-              placeholder="Write a reply here (paste or drop files)"
-              className="w-full resize-none border-0 focus:ring-0 focus:outline-none text-sm placeholder-gray-400 bg-transparent"
-              rows="2"
+      {/* Tabs + Details */}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* Tabs */}
+          <div className="bg-white border-b border-gray-200 px-3 py-2">
+            <Tabs
+              label="Ticket sections"
+              compact
+              active={activeTab}
+              onChange={setActiveTab}
+              tabs={[
+                { id: 'conversation', icon: MessagesSquare, label: 'Conversation', count: comments.length },
+                { id: 'attachments', icon: Paperclip, label: 'Attachments', count: attachments.length },
+                { id: 'activity', icon: Activity, label: 'Activity', count: activities.length },
+                ...(slaData ? [{ id: 'sla', icon: Timer, label: 'SLA' }] : []),
+              ]}
             />
           </div>
-          
-          {/* Attached files preview */}
-          {commentFiles.length > 0 && (
-            <div className="px-3 pb-2">
-              <div className="flex flex-wrap gap-2">
-                {commentFiles.map(file => (
-                  <div 
-                    key={file.id} 
-                    className="flex items-center gap-2 px-2 py-1 bg-gray-100 rounded text-xs"
-                  >
-                    <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+
+          {/* Tab Content */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {activeTab === 'conversation' && (
+              <ConversationTab
+                ticket={ticket}
+                comments={comments}
+                hideForm
+                onRefresh={refreshConversation}
+              />
+            )}
+
+            {activeTab === 'attachments' && (
+              <AttachmentsTab
+                attachments={attachments}
+                onAddAttachment={() => setShowAttachmentModal(true)}
+              />
+            )}
+
+            {activeTab === 'activity' && (
+              <ActivityTimeline activities={activities} />
+            )}
+
+            {activeTab === 'sla' && slaData && <SLATab slaData={slaData} />}
+          </div>
+
+          {/* Reply Box */}
+          <div className="bg-white border-t border-gray-200 p-4">
+            {/* Hidden file input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              className="hidden"
+              multiple
+            />
+        
+            <div 
+              className={`conversation-composer rounded-xl overflow-visible relative transition-colors ${
+                composerExpanded ? 'is-expanded' : ''
+              } ${isDragging ? 'ring-2 ring-[#0B3D26]/40' : ''}`}
+              onClick={() => { if (!composerExpanded) composerEditorRef.current?.focus?.() }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onPasteCapture={handlePaste}
+            >
+              {/* Drag overlay */}
+              {isDragging && (
+                <div className="absolute inset-0 bg-purple-50/90 flex items-center justify-center z-10 rounded-xl">
+                  <div className="text-center">
+                    <svg className="w-8 h-8 text-[#0B3D26] mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
-                    <span className="text-gray-700 truncate max-w-[120px]">{file.name}</span>
-                    <span className="text-gray-400">({formatFileSize(file.size)})</span>
-                    <button 
-                      onClick={() => removeFile(file.id)}
-                      className="text-gray-400 hover:text-red-500 ml-1"
+                    <p className="text-sm font-medium text-[#0B3D26]">Drop files here</p>
+                  </div>
+                </div>
+              )}
+          
+              {/* Input area */}
+              <RichEditor
+                key={ticketUuid}
+                compact
+                mentions
+                internal={commentInternal}
+                editorRef={(ref) => { composerEditorRef.current = ref }}
+                value={newComment}
+                onChange={setNewComment}
+                onMentionsChange={setCommentMentions}
+                onFocus={focusComposer}
+                onBlur={blurComposer}
+                placeholder="Write a reply… (use @ to mention, paste or drop files)"
+              />
+          
+              {/* Attached files preview */}
+              {commentFiles.length > 0 && (
+                <div className="pt-2">
+                  <div className="flex flex-wrap gap-2">
+                    {commentFiles.map(file => (
+                      <div 
+                        key={file.id} 
+                        className="flex items-center gap-2 px-2 py-1 bg-gray-100 rounded text-xs"
+                      >
+                        <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                        </svg>
+                        <span className="text-gray-700 truncate max-w-[120px]">{file.name}</span>
+                        <span className="text-gray-400">({formatFileSize(file.size)})</span>
+                        <button 
+                          onClick={() => removeFile(file.id)}
+                          className="text-gray-400 hover:text-red-500 ml-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+          
+              {/* Bottom bar with icons and send button */}
+              {composerExpanded && (
+              <div className="flex items-center justify-between pt-2">
+                {/* Left side - attachment and emoji icons */}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Attach file"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Add emoji"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                </div>
+            
+                {/* Right side - Send button with dropdown */}
+                <div className="relative" ref={sendDropdownRef}>
+                  {/* Dropdown menu - appears above button */}
+                  {showSendDropdown && (
+                    <div className="absolute bottom-full right-0 mb-2 w-48 bg-white border border-gray-200 -lg z-20">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommentInternal(false)
+                          setShowSendDropdown(false)
+                          focusComposer()
+                          composerEditorRef.current?.focus?.()
+                        }}
+                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 rounded-t-lg flex items-center gap-2 ${
+                          !commentInternal ? 'text-[#0B3D26] font-medium' : 'text-gray-700'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        Comment
+                        {!commentInternal && (
+                          <svg className="w-4 h-4 ml-auto text-[#0B3D26]" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCommentInternal(true)
+                          setShowSendDropdown(false)
+                          focusComposer()
+                          composerEditorRef.current?.focus?.()
+                        }}
+                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 rounded-b-lg flex items-center gap-2 ${
+                          commentInternal ? 'text-[#0B3D26] font-medium' : 'text-gray-700'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        Internal Note
+                        {commentInternal && (
+                          <svg className="w-4 h-4 ml-auto text-[#0B3D26]" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  )}
+              
+                  <div className="flex">
+                    {/* Main send button */}
+                    <button
+                      onClick={handleSubmitComment}
+                      disabled={processing || (isRichTextEmpty(newComment) && commentFiles.length === 0)}
+                      className="flex items-center gap-1 px-4 py-1.5 text-sm font-medium text-white bg-[#0B3D26] rounded-l-md hover:bg-[#14502F] transition-colors disabled:opacity-50"
                     >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      {processing ? 'Sending...' : (commentInternal ? 'Note' : 'Comment')}
+                    </button>
+                    {/* Dropdown toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setShowSendDropdown(!showSendDropdown)}
+                      className="px-2 py-1.5 text-white bg-[#0B3D26] border-l border-[#14502F] rounded-r-md hover:bg-[#14502F] transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
                       </svg>
                     </button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-          
-          {/* Bottom bar with icons and send button */}
-          <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-white rounded-b-lg">
-            {/* Left side - attachment and emoji icons */}
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-                title="Attach file"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-              </button>
-              <button
-                type="button"
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-                title="Add emoji"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </button>
-            </div>
-            
-            {/* Right side - Send button with dropdown */}
-            <div className="relative" ref={sendDropdownRef}>
-              {/* Dropdown menu - appears above button */}
-              {showSendDropdown && (
-                <div className="absolute bottom-full right-0 mb-2 w-48 bg-white border border-gray-200 -lg z-20">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommentInternal(false)
-                      setShowSendDropdown(false)
-                    }}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 rounded-t-lg flex items-center gap-2 ${
-                      !commentInternal ? 'text-[#4a154b] font-medium' : 'text-gray-700'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                    Comment
-                    {!commentInternal && (
-                      <svg className="w-4 h-4 ml-auto text-[#4a154b]" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCommentInternal(true)
-                      setShowSendDropdown(false)
-                    }}
-                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 rounded-b-lg flex items-center gap-2 ${
-                      commentInternal ? 'text-[#4a154b] font-medium' : 'text-gray-700'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                    Internal Note
-                    {commentInternal && (
-                      <svg className="w-4 h-4 ml-auto text-[#4a154b]" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    )}
-                  </button>
                 </div>
-              )}
-              
-              <div className="flex">
-                {/* Main send button */}
-                <button
-                  onClick={handleSubmitComment}
-                  disabled={processing || (!newComment.trim() && commentFiles.length === 0)}
-                  className="flex items-center gap-1 px-4 py-1.5 text-sm font-medium text-white bg-[#4a154b] rounded-l-md hover:bg-[#5a235c] transition-colors disabled:opacity-50"
-                >
-                  {processing ? 'Sending...' : (commentInternal ? 'Note' : 'Comment')}
-                </button>
-                {/* Dropdown toggle */}
-                <button
-                  type="button"
-                  onClick={() => setShowSendDropdown(!showSendDropdown)}
-                  className="px-2 py-1.5 text-white bg-[#4a154b] border-l border-[#5a235c] rounded-r-md hover:bg-[#5a235c] transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                  </svg>
-                </button>
               </div>
+              )}
             </div>
           </div>
         </div>
+
+        {/* Details pane */}
+        {detailsOpen ? (
+          <aside className="flex w-64 2xl:w-72 flex-shrink-0 flex-col border-l border-gray-200 bg-white">
+            <div className="h-11 px-3 border-b border-gray-200 bg-gray-50/50 flex items-center justify-between flex-shrink-0">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Details</h2>
+              <div className="flex items-center gap-1.5">
+                {isReadOnly && (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-gray-400" title="Reopen the ticket to edit it">
+                    <Lock className="w-3 h-3" /> Read-only
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDetailsOpen(false)}
+                  title="Hide details"
+                  aria-label="Hide details"
+                  className="w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                >
+                  <PanelRightClose className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              <dl className="px-2 py-1.5 divide-y divide-gray-100">
+                {detailRows.map((row) => (
+                  <React.Fragment key={row.key}>{row.node}</React.Fragment>
+                ))}
+              </dl>
+            </div>
+          </aside>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setDetailsOpen(true)}
+            title="Show details"
+            aria-label="Show details"
+            className="w-9 flex-shrink-0 flex flex-col items-center gap-2 border-l border-gray-200 bg-white pt-3 text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+          >
+            <PanelRightOpen className="w-4 h-4" />
+            <span className="text-[10px] font-medium uppercase tracking-wide [writing-mode:vertical-rl]">Details</span>
+          </button>
+        )}
       </div>
 
       {/* Attachment Drawer */}
-      <AttachmentDrawer
-        isOpen={showAttachmentDrawer}
-        onClose={() => setShowAttachmentDrawer(false)}
+      <AttachmentModal
+        isOpen={showAttachmentModal}
+        onClose={() => setShowAttachmentModal(false)}
         selectedFile={selectedAttachmentFile}
         setSelectedFile={setSelectedAttachmentFile}
         isInternal={isAttachmentInternal}

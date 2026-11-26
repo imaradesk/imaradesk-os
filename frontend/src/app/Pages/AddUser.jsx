@@ -1,18 +1,20 @@
 import React, { useEffect } from 'react'
 import { Head, useForm, Link } from '@inertiajs/react'
+import { useDirtyState, useUnsavedChanges } from '../context/UnsavedChangesContext'
 import toast from 'react-hot-toast'
 import AppShell from '../components/AppShell'
 import { THEME } from '../constants/theme'
 
-export default function AddUser({ orgs = [], errors = {}, old = {} }) {
+export default function AddUser({ organization = null, errors = {}, old = {} }) {
   const { data, setData, post, processing } = useForm({
-    username: old.username || '',
     email: old.email || '',
-    password: old.password || '',
-    full_name: old.full_name || '',
+    first_name: old.first_name || '',
+    last_name: old.last_name || '',
     is_agent: !!old.is_agent,
-    organization: old.organization || '',
   })
+  const dirty = useDirtyState(data)
+  const { allowNextNavigation } = useUnsavedChanges(dirty)
+
 
   useEffect(() => {
     // Show error toasts for server validation errors
@@ -66,20 +68,33 @@ export default function AddUser({ orgs = [], errors = {}, old = {} }) {
           <div className="p-6">
             <div className="bg-white border border-gray-200 rounded-lg p-6 max-w-2xl">
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                  <input
-                    type="text"
-                    value={data.username}
-                    onChange={(e) => setData('username', e.target.value)}
-                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors?.username ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="jdoe"
-                  />
-                  {errors?.username && <p className="mt-1 text-sm text-red-600">{errors.username}</p>}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">First Name <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      value={data.first_name}
+                      onChange={(e) => setData('first_name', e.target.value)}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors?.first_name ? 'border-red-500' : 'border-gray-300'}`}
+                      placeholder="John"
+                    />
+                    {errors?.first_name && <p className="mt-1 text-sm text-red-600">{errors.first_name}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Last Name <span className="text-red-500">*</span></label>
+                    <input
+                      type="text"
+                      value={data.last_name}
+                      onChange={(e) => setData('last_name', e.target.value)}
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors?.last_name ? 'border-red-500' : 'border-gray-300'}`}
+                      placeholder="Doe"
+                    />
+                    {errors?.last_name && <p className="mt-1 text-sm text-red-600">{errors.last_name}</p>}
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email <span className="text-red-500">*</span></label>
                   <input
                     type="email"
                     value={data.email}
@@ -91,56 +106,36 @@ export default function AddUser({ orgs = [], errors = {}, old = {} }) {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                  <input
-                    type="password"
-                    value={data.password}
-                    onChange={(e) => setData('password', e.target.value)}
-                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${errors?.password ? 'border-red-500' : 'border-gray-300'}`}
-                    placeholder="••••••••"
-                  />
-                  {errors?.password && <p className="mt-1 text-sm text-red-600">{errors.password}</p>}
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Organization</label>
                   <input
                     type="text"
-                    value={data.full_name}
-                    onChange={(e) => setData('full_name', e.target.value)}
-                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent border-gray-300"
-                    placeholder="John Doe"
+                    value={organization?.name || 'Default Organization'}
+                    disabled
+                    className="w-full px-4 py-2 border rounded-lg bg-gray-100 text-gray-600 border-gray-300 cursor-not-allowed"
                   />
+                  <p className="mt-1 text-xs text-gray-500">User will be added to your organization</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="is_agent"
-                      type="checkbox"
-                      checked={!!data.is_agent}
-                      onChange={(e) => setData('is_agent', e.target.checked)}
-                    />
-                    <label htmlFor="is_agent" className="text-sm text-gray-700">Agent</label>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Organization</label>
-                    <select
-                      value={data.organization}
-                      onChange={(e) => setData('organization', e.target.value)}
-                      className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent border-gray-300"
-                    >
-                      <option value="">— None —</option>
-                      {orgs?.map((o) => (
-                        <option key={o.id} value={o.id}>{o.name}</option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="is_agent"
+                    type="checkbox"
+                    checked={!!data.is_agent}
+                    onChange={(e) => setData('is_agent', e.target.checked)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="is_agent" className="text-sm text-gray-700">This user is an agent (support staff)</label>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-blue-700">
+                    <span className="font-medium">Note:</span> A secure password will be auto-generated and sent to the user's email along with login instructions.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
                   <button type="submit" disabled={processing} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300">
-                    {processing ? 'Saving…' : 'Create User'}
+                    {processing ? 'Creating...' : 'Create User'}
                   </button>
                   <Link href="/people/" className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">Cancel</Link>
                 </div>

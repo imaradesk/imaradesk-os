@@ -1,19 +1,26 @@
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import redirect
-from django.views.decorators.http import require_http_methods
-from django.db import connection
+from django.views.decorators.http import require_http_methods, require_POST, require_GET
 from inertia import inertia
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
 from modules.users.models import UserProfile, Organization, Role, Group
 from modules.users.permissions import Permission
+from modules.users.invitations import is_agent_role
 from modules.sla.models import SLAPolicy, BusinessHours, Holiday
 from modules.tickets.views import invalidate_views_cache
 from .models import App, InstalledApp, SecuritySettings
+from shared.utilities.organization import organization_name
+from shared.utilities.sanitization import sanitize_plain_text
+from shared.utilities.uploads import UploadError, store_image_data
+from shared.decorators import admin_required
 import json
+import math
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,33 +29,53 @@ User = get_user_model()
 
 
 @login_required
+@admin_required
+@inertia('SettingsHome')
+def settings_home(request):
+    """Administration landing page: a grid of all settings areas."""
+    return {}
+
+
+def _account_overview():
+    """Usage figures for the Account page."""
+    from modules.ticket.models import Ticket
+
+    now = timezone.now()
+    return {
+        'users': User.objects.filter(is_active=True).count(),
+        'agents': UserProfile.objects.filter(is_agent=True, user__is_active=True).count(),
+        'tickets': Ticket.objects.count(),
+        'tickets_this_month': Ticket.objects.filter(
+            created_at__gte=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        ).count(),
+    }
+
+
+@login_required
+@admin_required
 @inertia('Settings')
 def general_settings(request):
     """General settings page."""
-    from shared.models import Client, Domain
-    from modules.sla.models import BusinessHours
-    
-    # Get current organization (single-tenant)
-    tenant = Client.get_current()
-    
-    # Debug logging
-    print(f"[general_settings] Organization: {tenant.name if tenant else 'None'}")
-    
-    # Get business hours if exists
+    from django.conf import settings
+    from shared.models import Client
+    from modules.email_to_ticket.models import HelpEmail
+
+    client = Client.get_current()
     business_hours = BusinessHours.objects.filter(is_active=True).first()
-    
-    # Get primary domain
-    primary_domain = Domain.objects.filter(tenant=tenant, is_primary=True).first()
-    
+    help_email = HelpEmail.objects.first()
+
     business_data = {
-        'company_name': tenant.name if tenant else '',
-        'description': tenant.description if tenant else '',
-        'business_type': tenant.business_type if tenant else '',
-        'org_size': tenant.org_size if tenant else '',
-        'domain': primary_domain.domain if primary_domain else '',
-        'created_on': tenant.created_on.isoformat() if tenant and tenant.created_on else None,
+        'company_name': client.name,
+        'description': client.description,
+        'business_type': client.business_type,
+        'org_size': client.org_size,
+        'domain': client.domain_url or request.get_host(),
+        'created_on': client.created_on.isoformat() if client.created_on else None,
+        'help_email': help_email.email_address if help_email else None,
+        'logo_url': client.logo_url,
+        'subdomain': '',
     }
-    
+
     business_hours_data = None
     if business_hours:
         business_hours_data = {
@@ -74,97 +101,151 @@ def general_settings(request):
     return {
         'activeSection': 'general',
         'business': business_data,
+        'account': _account_overview(),
         'businessHours': business_hours_data,
     }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def update_business_info(request):
     """Update business/company information."""
-    from django.db import connection
     from shared.models import Client
-    import json
-    
+
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
-    
-    # Get current organization (single-tenant)
-    from shared.models import Client
-    tenant = Client.get_current()
-    
-    if not tenant:
-        return JsonResponse({'success': False, 'error': 'No tenant found'}, status=400)
-    
-    # Update tenant fields
+    if not isinstance(data, dict):
+        return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
+
+    client = Client.get_current()
+    fields = ('description', 'business_type', 'org_size')
     if 'company_name' in data:
-        tenant.name = data['company_name']
-    if 'description' in data:
-        tenant.description = data['description']
-    if 'business_type' in data:
-        tenant.business_type = data['business_type']
-    if 'org_size' in data:
-        tenant.org_size = data['org_size']
-    
-    try:
-        tenant.save()
-        return JsonResponse({
-            'success': True,
-            'message': 'Business information updated successfully',
-            'business': {
-                'company_name': tenant.name,
-                'description': tenant.description,
-                'business_type': tenant.business_type,
-                'org_size': tenant.org_size,
-            }
-        })
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': str(e)}, status=500)
+        name = sanitize_plain_text(str(data['company_name'] or '')).strip()
+        if not name:
+            return JsonResponse({'success': False, 'error': 'Company name is required'}, status=400)
+        client.name = name[:100]
+    for field in fields:
+        if field in data:
+            value = sanitize_plain_text(str(data[field] or ''))
+            limit = client._meta.get_field(field).max_length
+            setattr(client, field, value[:limit] if limit else value)
+    client.save()
+
+    return JsonResponse({
+        'success': True,
+        'message': 'Business information updated successfully',
+        'business': {
+            'company_name': client.name,
+            'description': client.description,
+            'business_type': client.business_type,
+            'org_size': client.org_size,
+        }
+    })
 
 
 @login_required
+@admin_required
+@require_http_methods(["POST"])
+def update_business_logo(request):
+    """Update business/company logo. Body: {"logo": "<data url>"}."""
+    from shared.models import Client
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'error': 'Invalid JSON'}, status=400)
+
+    logo_data = data.get('logo') if isinstance(data, dict) else None
+    if not logo_data:
+        return JsonResponse({'success': False, 'error': 'No logo data provided'}, status=400)
+
+    try:
+        logo_url = store_image_data(logo_data, 'logo', 'logos')
+    except UploadError as exc:
+        return JsonResponse({'success': False, 'error': exc.message}, status=exc.status)
+
+    client = Client.get_current()
+    client.logo_url = logo_url
+    client.save(update_fields=['logo_url'])
+    return JsonResponse({'success': True, 'message': 'Logo updated successfully', 'logo_url': logo_url})
+
+
+@login_required
+@admin_required
+@require_http_methods(["POST"])
+def remove_business_logo(request):
+    """Remove business/company logo."""
+    from shared.models import Client
+
+    client = Client.get_current()
+    client.logo_url = None
+    client.save(update_fields=['logo_url'])
+    return JsonResponse({'success': True, 'message': 'Logo removed successfully'})
+
+
+@login_required
+@admin_required
 @inertia('Settings')
 def notifications_settings(request):
     """Notifications settings page."""
     from .models import NotificationSettings
+    from shared.utilities.enums.notifications import NotificationsRegistry
     
     # Get business notification settings (singleton)
     settings = NotificationSettings.get_settings()
     
+    # Build notification_modules from registry
+    notification_modules = NotificationsRegistry.get_modules_with_items()
+    
+    # Build preferences dict from all registered fields
+    notification_preferences = {}
+    for field in NotificationsRegistry.get_all_fields():
+        notification_preferences[field] = getattr(settings, field, False)
+    notification_preferences['weekly_performance_report'] = settings.weekly_performance_report
+    notification_preferences['weekly_report_email'] = settings.weekly_report_email or request.user.email
+    
+    # Check which modules are installed
+    installed_modules = {
+        'tasks': False,
+        'kb': False,
+        'assets': False,
+        'surveys': False,
+    }
+    
+    # Check for Tasks module
+    tasks_app = App.objects.filter(slug='tasks-projects').first()
+    if tasks_app:
+        installed_modules['tasks'] = InstalledApp.objects.filter(app=tasks_app, is_active=True).exists()
+    
+    # Check for KB module
+    kb_app = App.objects.filter(slug='knowledge-base').first()
+    if kb_app:
+        installed_modules['kb'] = InstalledApp.objects.filter(app=kb_app, is_active=True).exists()
+    
+    # Check for Assets module
+    assets_app = App.objects.filter(slug='assets').first()
+    if assets_app:
+        installed_modules['assets'] = InstalledApp.objects.filter(app=assets_app, is_active=True).exists()
+    
+    # Check for Surveys module
+    surveys_app = App.objects.filter(slug='surveys').first()
+    if surveys_app:
+        installed_modules['surveys'] = InstalledApp.objects.filter(app=surveys_app, is_active=True).exists()
+    
     return {
         'activeSection': 'notifications',
-        'notification_preferences': {
-            # Ticket Notifications
-            'notify_new_ticket_created': settings.notify_new_ticket_created,
-            'notify_ticket_assigned': settings.notify_ticket_assigned,
-            'notify_ticket_status_changed': settings.notify_ticket_status_changed,
-            'notify_ticket_priority_changed': settings.notify_ticket_priority_changed,
-            'notify_new_comment': settings.notify_new_comment,
-            'notify_ticket_reassigned': settings.notify_ticket_reassigned,
-            'notify_ticket_group_assigned': settings.notify_ticket_group_assigned,
-            'notify_ticket_merged': settings.notify_ticket_merged,
-            'notify_ticket_mentioned': settings.notify_ticket_mentioned,
-            # KB Notifications
-            'notify_kb_article_published': settings.notify_kb_article_published,
-            'notify_kb_article_updated': settings.notify_kb_article_updated,
-            'notify_kb_feedback_received': settings.notify_kb_feedback_received,
-            'notify_kb_article_approved': settings.notify_kb_article_approved,
-            # SLA Notifications
-            'notify_sla_response_warning': settings.notify_sla_response_warning,
-            'notify_sla_response_breached': settings.notify_sla_response_breached,
-            'notify_sla_resolution_warning': settings.notify_sla_resolution_warning,
-            'notify_sla_resolution_breached': settings.notify_sla_resolution_breached,
-            # Reports
-            'weekly_performance_report': settings.weekly_performance_report,
-            'weekly_report_email': settings.weekly_report_email or request.user.email,
-        },
+        'installedModules': installed_modules,
+        'notification_modules': notification_modules,
+        'notification_preferences': notification_preferences,
         'user_email': request.user.email,
     }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def notifications_settings_update(request):
     """Update business notification settings."""
@@ -176,25 +257,37 @@ def notifications_settings_update(request):
         
         # Notification fields
         notification_fields = [
+            # Ticket Notifications
             'notify_new_ticket_created',
             'notify_ticket_assigned',
             'notify_ticket_status_changed',
             'notify_ticket_priority_changed',
             'notify_new_comment',
-            'notify_ticket_reassigned',
-            'notify_ticket_group_assigned',
             'notify_ticket_merged',
-            'notify_ticket_mentioned',
-            # KB
-            'notify_kb_article_published',
+            # Task Notifications
+            'notify_task_assigned',
+            'notify_task_status_changed',
+            'notify_task_comment',
+            'notify_task_due_soon',
+            'notify_task_overdue',
+            # KB Notifications
             'notify_kb_article_updated',
-            'notify_kb_feedback_received',
             'notify_kb_article_approved',
-            # SLA
-            'notify_sla_response_warning',
-            'notify_sla_response_breached',
+            # Asset Notifications
+            'notify_asset_assigned',
+            'notify_asset_status_changed',
+            'notify_asset_maintenance_due',
+            'notify_asset_warranty_expiring',
+            # Survey Notifications
+            'notify_survey_response',
+            'notify_survey_completed',
+            'notify_survey_reminder',
+            # SLA Notifications
             'notify_sla_resolution_warning',
             'notify_sla_resolution_breached',
+            # General Notifications
+            'notify_ticket_mentioned',
+            # Reports
             'weekly_performance_report',
         ]
         
@@ -213,14 +306,16 @@ def notifications_settings_update(request):
             'message': 'Notification settings saved successfully'
         })
     except Exception as e:
+        logger.exception('Request failed')
         logger.error(f"Error updating notification settings: {e}")
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=400)
 
 
 @login_required
+@admin_required
 @inertia('SecuritySettings')
 def security_settings(request):
     """Security settings page."""
@@ -248,6 +343,7 @@ def security_settings(request):
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def security_settings_update(request):
     """Update security settings."""
@@ -267,9 +363,10 @@ def security_settings_update(request):
             'message': 'Security settings saved successfully'
         })
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=400)
 
 
@@ -281,7 +378,7 @@ def send_email_2fa_code(request):
     """Send 2FA verification code to user's email."""
     import random
     from shared.utilities.Mailer import Mailer
-    from shared.utilities.GlobalEmailTenplates import GlobalEmailTemplates
+    from shared.utilities.templates import GlobalEmailTemplates
     
     try:
         profile = request.user.profile
@@ -391,7 +488,7 @@ def setup_authenticator_2fa(request):
         totp = pyotp.TOTP(secret)
         provisioning_uri = totp.provisioning_uri(
             name=request.user.email,
-            issuer_name='ImaraDesk'
+            issuer_name='Imaradesk'
         )
         
         # Generate QR code
@@ -468,7 +565,7 @@ def send_disable_2fa_code(request):
     """Send confirmation code to disable 2FA."""
     import random
     from shared.utilities.Mailer import Mailer
-    from shared.utilities.GlobalEmailTenplates import GlobalEmailTemplates
+    from shared.utilities.templates import GlobalEmailTemplates
     
     try:
         data = json.loads(request.body)
@@ -634,6 +731,7 @@ def disable_authenticator_2fa(request):
 
 
 @login_required
+@admin_required
 @inertia('TeamUsers')
 def team_users(request):
     """Team users page."""
@@ -675,11 +773,19 @@ def team_users(request):
         for g in groups_qs
     ]
 
+    from modules.users.models import UserInvitation
+    from modules.users.invitations import serialize_invitation
+    invitations = [
+        serialize_invitation(inv)
+        for inv in UserInvitation.objects.filter(status=UserInvitation.Status.PENDING).select_related('role', 'invited_by__profile')[:100]
+    ]
+
     return {
         'users': users,
         'orgs': orgs,
         'roles': roles,
         'groups': groups,
+        'invitations': invitations,
         'pagination': {
             'page': page.number,
             'pages': paginator.num_pages,
@@ -691,29 +797,7 @@ def team_users(request):
 
 
 @login_required
-@inertia('TeamRoles')
-def team_roles(request):
-    """Team roles page."""
-    roles_qs = Role.objects.all()
-    roles = [
-        {
-            'id': r.id,
-            'name': r.name,
-            'description': r.description,
-            'permissions': r.permissions if isinstance(r.permissions, list) else [],
-            'is_system': r.is_system,
-        }
-        for r in roles_qs
-    ]
-    permissions_grouped = Permission.get_grouped()
-
-    return {
-        'roles': roles,
-        'permissions': permissions_grouped,
-    }
-
-
-@login_required
+@admin_required
 @inertia('TeamGroups')
 def team_groups(request):
     """Team groups page."""
@@ -734,6 +818,7 @@ def team_groups(request):
 
 
 @login_required
+@admin_required
 def team_group_view(request, group_id):
     """Get group details including users and tickets."""
     try:
@@ -760,6 +845,7 @@ def team_group_view(request, group_id):
         for ticket in Ticket.objects.filter(group=group).select_related('assignee', 'assignee__profile')[:20]:
             tickets.append({
                 'id': ticket.id,
+                'uuid': str(ticket.uuid),
                 'subject': ticket.title,
                 'status': ticket.status,
                 'priority': ticket.priority,
@@ -781,6 +867,7 @@ def team_group_view(request, group_id):
 
 
 @login_required
+@admin_required
 def team_user_view(request, user_id):
     """Get user details including tickets and groups."""
     try:
@@ -805,6 +892,7 @@ def team_user_view(request, user_id):
         for ticket in user_tickets:
             tickets.append({
                 'id': ticket.id,
+                'uuid': str(ticket.uuid),
                 'title': ticket.title,
                 'status': ticket.status,
                 'priority': ticket.priority,
@@ -830,18 +918,28 @@ def team_user_view(request, user_id):
         return JsonResponse({'error': 'User not found'}, status=404)
 
 
-# Team Users CRUD
 @login_required
+@admin_required
 @inertia('TeamUserForm')
 def team_user_add(request):
     """Add new user."""
+    from modules.people.views import generate_strong_password, _send_welcome_email
+    
     if request.method == 'POST':
-        username = request.POST.get('username')
         email = request.POST.get('email')
         full_name = request.POST.get('full_name')
-        password = request.POST.get('password')
-        org_id = request.POST.get('organization')
         role_id = request.POST.get('role')
+        
+        # Use email as username
+        username = email
+        
+        # Auto-generate strong password
+        password = generate_strong_password()
+        
+        # Get organization from current user
+        org = None
+        if hasattr(request.user, 'profile') and request.user.profile.organization:
+            org = request.user.profile.organization
         
         # Handle groups - Inertia.js sends arrays as indexed keys (groups[0], groups[1], etc.)
         group_ids = request.POST.getlist('groups')
@@ -852,29 +950,28 @@ def team_user_add(request):
                 group_ids.append(request.POST.get(f'groups[{i}]'))
                 i += 1
         
-        # Debug logging
-        logger.info(f"[team_user_add] POST data: {dict(request.POST)}")
-        logger.info(f"[team_user_add] group_ids: {group_ids}")
         
         # Determine if user is an agent based on role
-        # Agent roles: Administrator, Agent, Manager
+        # Every role except Customer is a team role
         is_agent = False
         role = None
         if role_id:
             try:
                 role = Role.objects.get(id=role_id)
-                is_agent = role.name in ['Administrator', 'Agent', 'Manager']
+                is_agent = is_agent_role(role)
             except Role.DoesNotExist:
                 pass
 
-        if not username or not email:
-            return {'error': 'Username and email are required'}
+        if not email:
+            return {'error': 'Email is required'}
         
+        # Check for duplicate email/username
+        if User.objects.filter(email=email).exists() or User.objects.filter(username=email).exists():
+            return {'error': 'A user with this email already exists'}
+        
+
         # Create user
-        user = User.objects.create_user(username=username, email=email, password=password or 'changeme123')
-        
-        # Get organization
-        org = Organization.objects.get(id=org_id) if org_id else None
+        user = User.objects.create_user(username=username, email=email, password=password)
         
         # Create profile
         profile = UserProfile.objects.create(
@@ -890,111 +987,92 @@ def team_user_add(request):
             groups = Group.objects.filter(id__in=group_ids)
             profile.groups.set(groups)
         
+        # Send welcome email with credentials
+        _send_welcome_email(user, password)
+        
         return redirect('team_users')
     
     # GET - Show form
-    orgs = list(Organization.objects.all().values('id', 'name'))
+    organization = None
+    if hasattr(request.user, 'profile') and request.user.profile.organization:
+        org = request.user.profile.organization
+        organization = {'id': org.id, 'name': org.name}
+    
     roles = list(Role.objects.all().values('id', 'name', 'description'))
     groups_qs = Group.objects.all()
     groups = [{'id': g.id, 'name': g.name, 'description': g.description} for g in groups_qs]
     
     return {
         'mode': 'add',
-        'orgs': orgs,
+        'organization': organization,
         'roles': roles,
         'groups': groups,
     }
 
 
 @login_required
-@inertia('TeamUserForm')
-def team_user_edit(request, user_id):
-    """Edit existing user."""
+@admin_required
+@require_POST
+def team_user_update(request, user_id):
+    """Update a user's basic details (name and email) from the edit modal.
+
+    Role and group membership are intentionally not editable here.
+    """
+    from django.core.validators import validate_email
+    from django.core.exceptions import ValidationError
+
     try:
         user = User.objects.get(id=user_id)
         profile = user.profile
     except (User.DoesNotExist, UserProfile.DoesNotExist):
-        return redirect('team_users')
+        return JsonResponse({'error': 'User not found'}, status=404)
 
-    if request.method == 'POST':
-        full_name = request.POST.get('full_name')
-        email = request.POST.get('email')
-        org_id = request.POST.get('organization')
-        role_id = request.POST.get('role')
-        
-        # Handle groups - Inertia.js sends arrays as indexed keys (groups[0], groups[1], etc.)
-        group_ids = request.POST.getlist('groups')
-        if not group_ids:
-            # Try indexed format from Inertia.js
-            i = 0
-            while f'groups[{i}]' in request.POST:
-                group_ids.append(request.POST.get(f'groups[{i}]'))
-                i += 1
+    try:
+        body = json.loads(request.body or '{}')
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
+    if not isinstance(body, dict):
+        return JsonResponse({'error': 'Invalid request'}, status=400)
 
-        # Debug logging
-        logger.info(f"[team_user_edit] POST data: {dict(request.POST)}")
-        logger.info(f"[team_user_edit] group_ids: {group_ids}")
+    full_name = (body.get('full_name') or '').strip()
+    email = (body.get('email') or '').strip()
 
-        user.email = email or user.email
-        profile.full_name = full_name or profile.full_name
-        
-        if org_id:
-            try:
-                profile.organization = Organization.objects.get(id=org_id)
-            except Organization.DoesNotExist:
-                profile.organization = None
+    errors = {}
+    if not full_name:
+        errors['full_name'] = 'Name is required'
+    if not email:
+        errors['email'] = 'Email is required'
+    else:
+        try:
+            validate_email(email)
+        except ValidationError:
+            errors['email'] = 'Enter a valid email address'
         else:
-            profile.organization = None
-        
-        if role_id:
-            try:
-                role = Role.objects.get(id=role_id)
-                profile.role = role
-                # Determine if user is an agent based on role
-                profile.is_agent = role.name in ['Administrator', 'Agent', 'Manager']
-            except Role.DoesNotExist:
-                profile.role = None
-                profile.is_agent = False
-        else:
-            profile.role = None
-            profile.is_agent = False
-        
-        # Update groups
-        if group_ids:
-            groups = Group.objects.filter(id__in=group_ids)
-            profile.groups.set(groups)
-        else:
-            profile.groups.clear()
-        
-        profile.save()
-        user.save(update_fields=['email'])
-        return redirect('team_users')
-    
-    # GET - Show form with existing data
-    orgs = list(Organization.objects.all().values('id', 'name'))
-    roles = list(Role.objects.all().values('id', 'name', 'description'))
-    groups_qs = Group.objects.all()
-    groups = [{'id': g.id, 'name': g.name, 'description': g.description} for g in groups_qs]
-    
-    return {
-        'mode': 'edit',
+            if User.objects.filter(email__iexact=email).exclude(id=user.id).exists():
+                errors['email'] = 'A user with this email already exists'
+
+    if errors:
+        return JsonResponse({'error': next(iter(errors.values())), 'errors': errors}, status=400)
+
+    profile.full_name = full_name
+    profile.save(update_fields=['full_name'])
+
+    user.email = email
+    user.save(update_fields=['email'])
+
+    return JsonResponse({
+        'success': True,
         'user': {
             'id': user.id,
-            'username': user.username,
-            'email': user.email,
             'full_name': profile.full_name,
-            'is_agent': profile.is_agent,
-            'organization': profile.organization.id if profile.organization else '',
-            'role': profile.role.id if profile.role else '',
-            'groups': [g.id for g in profile.groups.all()],
+            'name': profile.full_name or user.get_username(),
+            'email': user.email,
         },
-        'orgs': orgs,
-        'roles': roles,
-        'groups': groups,
-    }
+    })
 
 
 @login_required
+@admin_required
 def team_user_delete(request, user_id):
     """Delete user."""
     if request.method == 'POST':
@@ -1006,219 +1084,169 @@ def team_user_delete(request, user_id):
     return redirect('team_users')
 
 
-# Team Roles CRUD
-@login_required
-@inertia('TeamRoleForm')
-def team_role_add(request):
-    """Add new role."""
-    if request.method == 'POST':
-        name = request.POST.get('name')
-        description = request.POST.get('description', '')
-        permissions = request.POST.getlist('permissions')
-        
-        if not name:
-            return {'error': 'Role name is required'}
-        
-        if Role.objects.filter(name=name).exists():
-            return {'error': 'Role name already exists'}
-        
-        Role.objects.create(
-            name=name,
-            description=description,
-            permissions=permissions,
-        )
-        return redirect('team_roles')
-    
-    # GET - Show form
-    permissions_grouped = Permission.get_grouped()
-    return {
-        'mode': 'add',
-        'permissions': permissions_grouped,
-    }
+# Team invitations
+MAX_INVITES_PER_REQUEST = 50
 
 
 @login_required
-@inertia('TeamRoleForm')
-def team_role_edit(request, role_id):
-    """Edit existing role."""
+@admin_required
+@require_POST
+def team_user_invite(request):
+    """Invite people by email. Body: {"emails": [...], "role_id": 1}."""
+    from django.core.validators import validate_email
+    from django.core.exceptions import ValidationError
+    from modules.users.models import UserInvitation
+    from modules.users.invitations import find_user, is_team_member, send_invitation_email, INVITE_EXPIRY_DAYS
+
     try:
-        role = Role.objects.get(id=role_id)
-    except Role.DoesNotExist:
-        return redirect('team_roles')
-    
-    if request.method == 'POST':
-        description = request.POST.get('description', '')
-        permissions = request.POST.getlist('permissions')
-        
-        # Only allow name changes for non-system roles
-        if not role.is_system:
-            name = request.POST.get('name')
-            if not name:
-                return {'error': 'Role name is required'}
-            if Role.objects.filter(name=name).exclude(id=role_id).exists():
-                return {'error': 'Role name already exists'}
-            role.name = name
-        
-        role.description = description
-        role.permissions = permissions
-        role.save()
-        return redirect('team_roles')
-    
-    # GET - Show form with existing data
-    permissions_grouped = Permission.get_grouped()
-    return {
-        'mode': 'edit',
-        'role': {
-            'id': role.id,
-            'name': role.name,
-            'description': role.description,
-            'is_system': role.is_system,
-            'permissions': role.permissions if isinstance(role.permissions, list) else [],
-        },
-        'permissions': permissions_grouped,
-    }
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid request'}, status=400)
 
+    raw_emails = body.get('emails') or []
+    if not isinstance(raw_emails, list) or not raw_emails:
+        return JsonResponse({'error': 'Add at least one email address'}, status=400)
+    if len(raw_emails) > MAX_INVITES_PER_REQUEST:
+        return JsonResponse({'error': f'You can invite up to {MAX_INVITES_PER_REQUEST} people at a time'}, status=400)
 
-@login_required
-def team_role_delete(request, role_id):
-    """Delete role."""
-    if request.method == 'POST':
+    role = Role.objects.filter(id=body.get('role_id')).first()
+    if not role:
+        return JsonResponse({'error': 'Choose a role'}, status=400)
+
+    emails = []
+    for raw in raw_emails:
+        email = str(raw).strip().lower()
         try:
-            role = Role.objects.get(id=role_id)
-            if not role.is_system:
-                role.delete()
-        except Role.DoesNotExist:
-            pass
-    return redirect('team_roles')
+            validate_email(email)
+        except ValidationError:
+            return JsonResponse({'error': f'"{email}" isn\'t a valid email address'}, status=400)
+        if email not in emails:
+            emails.append(email)
+
+
+    sent, skipped, failed = [], [], []
+    for email in emails:
+        if is_team_member(find_user(email)):
+            skipped.append({'email': email, 'reason': 'Already on the team'})
+            continue
+        invitation = UserInvitation.create_for(email, role, request.user, expires_days=INVITE_EXPIRY_DAYS)
+        if send_invitation_email(request, invitation):
+            sent.append(email)
+        else:
+            # Keep the invitation so it can be resent from the pending list
+            failed.append(email)
+
+    return JsonResponse({'success': True, 'sent': sent, 'skipped': skipped, 'failed': failed})
 
 
 @login_required
-def team_role_view(request, role_id):
-    """Get role details including users with this role."""
+@admin_required
+@require_POST
+def team_invite_resend(request, invite_id):
+    """Issue a fresh link (new token, new expiry) and email it again."""
+    from modules.users.models import UserInvitation
+    from modules.users.invitations import send_invitation_email, INVITE_EXPIRY_DAYS
+
+    invitation = UserInvitation.objects.filter(id=invite_id, status=UserInvitation.Status.PENDING).first()
+    if not invitation:
+        return JsonResponse({'error': 'Invitation not found'}, status=404)
+
+    if invitation.role is None:
+        return JsonResponse({'error': 'The role for this invitation was deleted. Revoke it and invite again.'}, status=400)
+
+    # Keep the original inviter: resending shouldn't change who "invited" them
+    fresh = UserInvitation.create_for(invitation.email, invitation.role, invitation.invited_by or request.user, expires_days=INVITE_EXPIRY_DAYS)
+    if not send_invitation_email(request, fresh):
+        return JsonResponse({'error': "Couldn't send the email. Check your email settings and try again."}, status=502)
+    return JsonResponse({'success': True})
+
+
+@login_required
+@admin_required
+@require_POST
+def team_invite_revoke(request, invite_id):
+    """Cancel a pending invitation so its link stops working."""
+    from modules.users.models import UserInvitation
+
+    updated = UserInvitation.objects.filter(
+        id=invite_id, status=UserInvitation.Status.PENDING,
+    ).update(status=UserInvitation.Status.REVOKED)
+    if not updated:
+        return JsonResponse({'error': 'Invitation not found'}, status=404)
+    return JsonResponse({'success': True})
+
+
+# Team Groups CRUD (the add/edit form is a modal on the groups page; these are its JSON endpoints)
+def _group_payload(request, group_id=None):
+    """Validated {'name', 'description'} from a JSON body, or (None, errors)."""
     try:
-        role = Role.objects.get(id=role_id)
-        
-        # Get users with this role
-        users = []
-        for profile in UserProfile.objects.filter(role=role).select_related('user', 'organization'):
-            users.append({
-                'id': profile.user.id,
-                'username': profile.user.username,
-                'email': profile.user.email,
-                'full_name': profile.full_name,
-                'is_agent': profile.is_agent,
-                'organization': profile.organization.name if profile.organization else None,
-                'status': 'online',
-            })
-        
-        # Get all permissions grouped
-        permissions_grouped = Permission.get_grouped()
-        
-        return JsonResponse({
-            'id': role.id,
-            'name': role.name,
-            'description': role.description,
-            'is_system': role.is_system,
-            'permissions': role.permissions if isinstance(role.permissions, list) else [],
-            'all_permissions': permissions_grouped,
-            'user_count': len(users),
-            'users': users,
-            'created_at': role.created_at.isoformat() if hasattr(role, 'created_at') and role.created_at else None,
-        })
-    except Role.DoesNotExist:
-        return JsonResponse({'error': 'Role not found'}, status=404)
+        data = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return None, {'form': 'Invalid request'}
+    if not isinstance(data, dict):
+        return None, {'form': 'Invalid request'}
+    name = str(data.get('name') or '').strip()
+    description = str(data.get('description') or '').strip()
+    errors = {}
+    if not name:
+        errors['name'] = 'Group name is required'
+    elif len(name) > Group._meta.get_field('name').max_length:
+        errors['name'] = 'Group name is too long'
+    elif Group.objects.filter(name__iexact=name).exclude(id=group_id).exists():
+        errors['name'] = 'A group with this name already exists'
+    if errors:
+        return None, errors
+    return {'name': name, 'description': description}, None
+
+
+def _serialize_group(group):
+    return {
+        'id': group.id,
+        'name': group.name,
+        'description': group.description,
+        'member_count': group.members.count(),
+    }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
-def team_role_update_permissions(request, role_id):
-    """Update role permissions."""
-    try:
-        role = Role.objects.get(id=role_id)
-        
-        # Handle permissions - Inertia.js sends arrays as indexed keys
-        permissions = request.POST.getlist('permissions')
-        if not permissions:
-            # Try indexed format from Inertia.js
-            i = 0
-            while f'permissions[{i}]' in request.POST:
-                permissions.append(request.POST.get(f'permissions[{i}]'))
-                i += 1
-        
-        role.permissions = permissions
-        role.save()
-        
-        return JsonResponse({
-            'success': True,
-            'permissions': role.permissions,
-        })
-    except Role.DoesNotExist:
-        return JsonResponse({'error': 'Role not found'}, status=404)
-
-
-# Team Groups CRUD
-@login_required
-@inertia('TeamGroupForm')
 def team_group_add(request):
-    """Add new group."""
-    if request.method == 'POST':
-        name = request.POST.get('name')
-        description = request.POST.get('description', '')
-        
-        if not name:
-            return {'error': 'Group name is required'}
-        
-        if Group.objects.filter(name=name).exists():
-            return {'error': 'Group name already exists'}
-        
-        Group.objects.create(
-            name=name,
-            description=description,
-        )
-        return redirect('team_groups')
-    
-    # GET - Show form
-    return {
-        'mode': 'add',
-    }
-
-
-@login_required
-@inertia('TeamGroupForm')
-def team_group_edit(request, group_id):
-    """Edit existing group."""
+    """Create a group."""
+    data, errors = _group_payload(request)
+    if errors:
+        return JsonResponse({'errors': errors}, status=400)
     try:
-        group = Group.objects.get(id=group_id)
-    except Group.DoesNotExist:
-        return redirect('team_groups')
-    
-    if request.method == 'POST':
-        name = request.POST.get('name')
-        description = request.POST.get('description', '')
-        
-        if not name:
-            return {'error': 'Group name is required'}
-        
-        if Group.objects.filter(name=name).exclude(id=group_id).exists():
-            return {'error': 'Group name already exists'}
-        
-        group.name = name
-        group.description = description
-        group.save()
-        return redirect('team_groups')
-    
-    # GET - Show form with existing data
-    return {
-        'mode': 'edit',
-        'group': {
-            'id': group.id,
-            'name': group.name,
-            'description': group.description,
-        },
-    }
+        with transaction.atomic():
+            group = Group.objects.create(**data)
+    except IntegrityError:  # a concurrent create with the same name
+        return JsonResponse({'errors': {'name': 'A group with this name already exists'}}, status=400)
+    return JsonResponse({'group': _serialize_group(group)}, status=201)
 
 
 @login_required
+@admin_required
+@require_http_methods(["POST"])
+def team_group_edit(request, group_id):
+    """Rename / redescribe a group."""
+    group = Group.objects.filter(id=group_id).first()
+    if group is None:
+        return JsonResponse({'errors': {'form': 'Group not found'}}, status=404)
+    data, errors = _group_payload(request, group_id)
+    if errors:
+        return JsonResponse({'errors': errors}, status=400)
+    group.name = data['name']
+    group.description = data['description']
+    try:
+        with transaction.atomic():
+            group.save(update_fields=['name', 'description', 'updated_at'])
+    except IntegrityError:
+        return JsonResponse({'errors': {'name': 'A group with this name already exists'}}, status=400)
+    return JsonResponse({'group': _serialize_group(group)})
+
+
+@login_required
+@admin_required
 def team_group_delete(request, group_id):
     """Delete group."""
     if request.method == 'POST':
@@ -1231,16 +1259,17 @@ def team_group_delete(request, group_id):
 
 
 @login_required
+@admin_required
 def team_group_available_agents(request, group_id):
     """Get available agents that can be added to a group (not already members)."""
     try:
         group = Group.objects.get(id=group_id)
         
         # Get all agents not in this group
-        # Agent is determined by role (Administrator, Agent, Manager)
+        # Agents, including those holding a custom role
         existing_member_ids = group.members.values_list('id', flat=True)
         available_profiles = UserProfile.objects.filter(
-            role__name__in=['Administrator', 'Agent', 'Manager']
+            Q(is_agent=True) | Q(role__name__in=['Administrator', 'Agent'])
         ).exclude(
             id__in=existing_member_ids
         ).select_related('user', 'organization', 'role')
@@ -1266,6 +1295,7 @@ def team_group_available_agents(request, group_id):
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def team_group_add_members(request, group_id):
     """Add members to a group."""
@@ -1279,8 +1309,8 @@ def team_group_add_members(request, group_id):
         
         # Add members to group (filter by agent roles)
         profiles = UserProfile.objects.filter(
+            Q(is_agent=True) | Q(role__name__in=['Administrator', 'Agent']),
             id__in=profile_ids,
-            role__name__in=['Administrator', 'Agent', 'Manager']
         )
         added_count = 0
         for profile in profiles:
@@ -1296,60 +1326,94 @@ def team_group_add_members(request, group_id):
     except Group.DoesNotExist:
         return JsonResponse({'error': 'Group not found'}, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         logger.error(f"Error adding members to group: {e}")
-        return JsonResponse({'error': str(e)}, status=400)
+        return JsonResponse({'error': 'Something went wrong. Please try again.'}, status=400)
 
 
 # Emails Settings Views
 @login_required
+@admin_required
 @inertia('EmailsTemplates')
 def emails_templates(request):
-    """Email templates settings page."""
-    from .models import EmailTemplate
-    from django.core.paginator import Paginator
-    
-    # Get page number from query params
-    page_number = request.GET.get('page', 1)
-    per_page = 10
-    
-    # Get all templates ordered by type
-    all_templates = EmailTemplate.objects.all().order_by('template_type')
-    
-    # Paginate
-    paginator = Paginator(all_templates, per_page)
-    page_obj = paginator.get_page(page_number)
-    
-    templates_data = []
-    for template in page_obj:
-        templates_data.append({
-            'id': template.id,
-            'name': template.name,
-            'template_type': template.template_type,
-            'type': template.get_template_type_display(),
-            'subject': template.subject,
-            'body_html': template.body_html,
-            'body_text': template.body_text,
-            'status': template.status,
-            'available_variables': template.available_variables,
-            'created_at': template.created_at.isoformat() if template.created_at else None,
-            'updated_at': template.updated_at.isoformat() if template.updated_at else None,
-        })
-    
+    """Email templates settings page.
+
+    template_type is unique, so there is at most one template per type (a few dozen rows).
+    Everything is sent at once and searched and filtered in the browser.
+    """
+    from .models import EmailTemplate, NotificationSettings
+
+    templates_data = [
+        {
+            'id': t.id,
+            'name': t.name,
+            'template_type': t.template_type,
+            'type': t.get_template_type_display(),
+            'category': _email_template_category(t.template_type),
+            'subject': t.subject,
+            'status': t.status,
+            'variable_count': len(t.available_variables or {}),
+            'updated_at': t.updated_at.isoformat() if t.updated_at else None,
+        }
+        for t in EmailTemplate.objects.all().order_by('name')
+    ]
     return {
         'activeSection': 'emails-templates',
         'templates': templates_data,
-        'pagination': {
-            'current_page': page_obj.number,
-            'total_pages': paginator.num_pages,
-            'per_page': per_page,
-            'total_count': paginator.count,
-            'has_next': page_obj.has_next(),
-            'has_previous': page_obj.has_previous(),
-        }
+        'emailSettings': {
+            'use_business_name_in_footer': NotificationSettings.get_settings().use_business_name_in_footer,
+        },
+        'businessName': organization_name(''),
     }
 
 
 @login_required
+@admin_required
+@require_http_methods(["POST"])
+def email_settings_update(request):
+    """Save email-wide options shown on the templates page."""
+    from .models import NotificationSettings
+
+    try:
+        data = json.loads(request.body)
+        settings = NotificationSettings.get_settings()
+        if 'use_business_name_in_footer' in data:
+            settings.use_business_name_in_footer = bool(data['use_business_name_in_footer'])
+            settings.save(update_fields=['use_business_name_in_footer', 'updated_at'])
+        return JsonResponse({
+            'success': True,
+            'use_business_name_in_footer': settings.use_business_name_in_footer,
+        })
+    except Exception as e:
+        logger.error(f"Error updating email settings: {e}")
+        return JsonResponse({'success': False, 'message': 'Could not save the setting'}, status=400)
+
+
+def _email_template_category(template_type):
+    """Group a template type under the heading the templates page shows it in."""
+    if template_type.startswith('sla_'):
+        return 'SLA'
+    if template_type.startswith('asset_'):
+        return 'Assets'
+    if template_type.startswith('kb_'):
+        return 'Knowledge base'
+    if 'task' in template_type:
+        return 'Tasks'
+    if template_type.startswith('comment_') or template_type == 'user_mentioned':
+        return 'Comments'
+    if template_type in ('welcome_user', 'password_reset'):
+        return 'Account'
+    if template_type.startswith('survey_'):
+        return 'Surveys'
+    if template_type.endswith('_report'):
+        return 'Reports'
+    if template_type == 'custom':
+        return 'Custom'
+    return 'Tickets'
+
+
+@login_required
+@admin_required
 @require_http_methods(["POST"])
 def test_email_template(request, template_id):
     """Send a test email using the specified template with Mailer."""
@@ -1371,7 +1435,7 @@ def test_email_template(request, template_id):
         
         # Get user's full name from profile or construct from first/last name
         try:
-            user_full_name = request.user.userprofile.full_name
+            user_full_name = request.user.profile.full_name
         except:
             user_full_name = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.username
         
@@ -1387,7 +1451,7 @@ def test_email_template(request, template_id):
             'ticket_priority': 'High',
             'ticket_status': 'Open',
             'ticket_description': 'This is a sample ticket description for testing purposes.',
-            'company_name': 'ImaraDesk Support',
+            'company_name': 'Imaradesk Support',
             'ticket_url': f'{request.scheme}://{request.get_host()}/tickets/12345',
             'login_url': f'{request.scheme}://{request.get_host()}/login',
             'reset_url': f'{request.scheme}://{request.get_host()}/reset-password/test-token-abc123',
@@ -1432,46 +1496,49 @@ def test_email_template(request, template_id):
             'message': 'Email template not found',
         }, status=404)
     except ValueError as e:
+        logger.exception('Request failed')
         # Validation errors (e.g., missing placeholders)
         return JsonResponse({
             'success': False,
-            'message': f'Template validation error: {str(e)}',
+            'message': 'Template validation error',
         }, status=400)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': f'Failed to send test email: {str(e)}',
+            'message': 'Failed to send test email',
         }, status=500)
 
 
 @login_required
+@admin_required
 @inertia('EditEmailTemplate')
 def edit_email_template(request, template_id):
     """Edit email template page."""
     from .models import EmailTemplate
-    
-    try:
-        template = EmailTemplate.objects.get(id=template_id)
-        
-        template_data = {
+
+    template = EmailTemplate.objects.filter(id=template_id).first()
+    if template is None:
+        return redirect('emails_templates')
+    return {
+        'activeSection': 'emails-templates',
+        'template': {
             'id': template.id,
             'name': template.name,
             'template_type': template.template_type,
+            'type': template.get_template_type_display(),
+            'category': _email_template_category(template.template_type),
             'subject': template.subject,
-            'body_html': template.body_html,
             'body_text': template.body_text,
             'status': template.status,
             'available_variables': template.available_variables,
-        }
-        
-        return {
-            'template': template_data,
-        }
-    except EmailTemplate.DoesNotExist:
-        return redirect('emails_templates')
+            'updated_at': template.updated_at.isoformat() if template.updated_at else None,
+        },
+    }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def update_email_template(request, template_id):
     """Update email template."""
@@ -1482,19 +1549,40 @@ def update_email_template(request, template_id):
         template = EmailTemplate.objects.get(id=template_id)
         data = json.loads(request.body)
         
-        # Update allowed fields
-        template.name = data.get('name', template.name)
-        template.subject = data.get('subject', template.subject)
-        template.body_text = data.get('body_text', template.body_text)
-        template.status = data.get('status', template.status)
+        name = str(data.get('name', template.name)).strip()
+        subject = str(data.get('subject', template.subject)).strip()
+        body_text = str(data.get('body_text', template.body_text))
+        status = data.get('status', template.status)
+
+        errors = {}
+        if not name:
+            errors['name'] = 'Name is required'
+        elif len(name) > EmailTemplate._meta.get_field('name').max_length:
+            errors['name'] = 'Name is too long'
+        if not subject:
+            errors['subject'] = 'Subject is required'
+        elif len(subject) > EmailTemplate._meta.get_field('subject').max_length:
+            errors['subject'] = 'Subject is too long'
+        if not body_text.strip():
+            errors['body_text'] = 'Email body is required'
+        if status not in dict(EmailTemplate.STATUS_CHOICES):
+            errors['status'] = 'Invalid status'
+        if errors:
+            return JsonResponse({'success': False, 'message': 'Please fix the highlighted fields', 'errors': errors}, status=400)
+
+        template.name = name
+        template.subject = subject
+        template.body_text = body_text
+        template.status = status
         # body_html is now auto-generated from body_text, keep it empty
         template.body_html = ''
-        
+
         template.save()
-        
+
         return JsonResponse({
             'success': True,
             'message': 'Email template updated successfully',
+            'updated_at': template.updated_at.isoformat(),
         })
     
     except EmailTemplate.DoesNotExist:
@@ -1503,13 +1591,480 @@ def update_email_template(request, template_id):
             'message': 'Email template not found',
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': f'Failed to update template: {str(e)}',
+            'message': 'Failed to update template',
         }, status=500)
 
 
+@login_required
+@admin_required
+@inertia('EmailsSMTP')
+def emails_smtp(request):
+    """SMTP configuration settings page."""
+    from modules.settings.models import SMTP
+    
+    smtp_config = {}
+    try:
+        smtp = SMTP.objects.first()
+        if smtp:
+            smtp_config = {
+                'enabled': smtp.enabled,
+                'active': smtp.active,
+                'host': smtp.host,
+                'port': smtp.port,
+                'username': smtp.username,
+                'use_tls': smtp.use_tls,
+                'use_ssl': smtp.use_ssl,
+                'from_email': smtp.default_from_email,
+                'from_name': smtp.sender_name or '',
+                'has_password': bool(smtp.password_encrypted),
+            }
+    except Exception:
+        pass
+    
+    return {
+        'activeSection': 'emails-smtp',
+        'smtp_config': smtp_config,
+    }
+
+
+@login_required
+@admin_required
+@require_POST
+def test_smtp(request):
+    """Test SMTP connection with provided credentials."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    try:
+        data = json.loads(request.body)
+        
+        host = data.get('host', '').strip()
+        port = int(data.get('port', 587))
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        use_tls = data.get('use_tls', True)
+        use_ssl = data.get('use_ssl', False)
+        from_email = data.get('from_email', '').strip()
+        from_name = data.get('from_name', '').strip()
+        test_email = data.get('test_email', request.user.email).strip()
+        
+        if not all([host, port, username, from_email]):
+            return JsonResponse({
+                'success': False,
+                'message': 'Missing required fields: host, port, username, and from_email are required.'
+            }, status=400)
+        
+        if not test_email or '@' not in test_email:
+            return JsonResponse({
+                'success': False,
+                'message': 'A valid test email address is required.'
+            }, status=400)
+        
+        # If no password provided but we have existing config, use stored password
+        if not password:
+            from modules.settings.models import SMTP
+            smtp_config = SMTP.objects.first()
+            if smtp_config and smtp_config.password_encrypted:
+                password = smtp_config.get_password()
+        
+        if not password:
+            return JsonResponse({
+                'success': False,
+                'message': 'Password is required for SMTP connection test.'
+            }, status=400)
+        
+        # Create test email
+        msg = MIMEMultipart()
+        msg['From'] = f'"{from_name}" <{from_email}>' if from_name else from_email
+        msg['To'] = test_email
+        msg['Subject'] = 'SMTP Configuration Test - Imaradesk'
+        
+        body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2 style="color: #4a154b;">✅ SMTP Test Successful!</h2>
+            <p>Your SMTP configuration is working correctly.</p>
+            <p><strong>Server:</strong> {host}:{port}</p>
+            <p><strong>Encryption:</strong> {'TLS' if use_tls else 'SSL' if use_ssl else 'None'}</p>
+            <hr style="border: 1px solid #eee; margin: 20px 0;">
+            <p style="color: #666; font-size: 12px;">This is an automated test email from Imaradesk.</p>
+        </body>
+        </html>
+        """
+        msg.attach(MIMEText(body, 'html'))
+        
+        # Connect and send
+        if use_ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=30)
+        else:
+            server = smtplib.SMTP(host, port, timeout=30)
+            if use_tls:
+                server.starttls()
+        
+        server.login(username, password)
+        server.send_message(msg)
+        server.quit()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Test email sent successfully to {test_email}!'
+        })
+        
+    except smtplib.SMTPAuthenticationError:
+        return JsonResponse({
+            'success': False,
+            'message': 'Authentication failed. Please check your username and password.'
+        }, status=400)
+    except smtplib.SMTPConnectError:
+        return JsonResponse({
+            'success': False,
+            'message': f'Could not connect to SMTP server. Please check the host and port.'
+        }, status=400)
+    except smtplib.SMTPException as e:
+        logger.exception('Request failed')
+        return JsonResponse({
+            'success': False,
+            'message': 'SMTP error'
+        }, status=400)
+    except Exception as e:
+        logger.exception('Request failed')
+        return JsonResponse({
+            'success': False,
+            'message': 'Connection failed'
+        }, status=500)
+
+
+@login_required
+@admin_required
+@require_POST
+def save_smtp(request):
+    """Save SMTP configuration to database."""
+    from modules.settings.models import SMTP
+    
+    try:
+        data = json.loads(request.body)
+        
+        enabled = data.get('enabled', False)
+        active = data.get('active', True)
+        
+        # Get existing SMTP config first
+        smtp_config = SMTP.objects.first()
+        
+        # Extract fields from request, falling back to existing stored values
+        host = data.get('host', '').strip() if 'host' in data else (smtp_config.host if smtp_config else '')
+        port = int(data.get('port', 587)) if 'port' in data else (smtp_config.port if smtp_config else 587)
+        username = data.get('username', '').strip() if 'username' in data else (smtp_config.username if smtp_config else '')
+        password = data.get('password', '')
+        use_tls = data.get('use_tls', True) if 'use_tls' in data else (smtp_config.use_tls if smtp_config else True)
+        use_ssl = data.get('use_ssl', False) if 'use_ssl' in data else (smtp_config.use_ssl if smtp_config else False)
+        from_email = data.get('from_email', '').strip() if 'from_email' in data else (smtp_config.default_from_email if smtp_config else '')
+        from_name = data.get('from_name', '').strip() if 'from_name' in data else (smtp_config.sender_name if smtp_config else '')
+        
+        # Validation only required when enabling SMTP
+        if enabled:
+            if not all([host, port, username, from_email]):
+                return JsonResponse({
+                    'success': False,
+                    'message': 'Missing required fields: host, port, username, and from_email are required.'
+                }, status=400)
+        
+        # Create or update SMTP config
+        if not smtp_config:
+            smtp_config = SMTP(
+                enabled=enabled,
+                active=active,
+                host=host or 'smtp.example.com',
+                port=port,
+                username=username or '',
+                use_tls=use_tls,
+                use_ssl=use_ssl,
+                default_from_email=from_email or 'noreply@example.com',
+                sender_name=from_name or '',
+            )
+        else:
+            smtp_config.enabled = enabled
+            smtp_config.active = active
+            smtp_config.host = host
+            smtp_config.port = port
+            smtp_config.username = username
+            smtp_config.use_tls = use_tls
+            smtp_config.use_ssl = use_ssl
+            smtp_config.default_from_email = from_email
+            smtp_config.sender_name = from_name
+        
+        # Only update password if provided (allows keeping existing password)
+        if password:
+            smtp_config.set_password(password)
+        
+        smtp_config.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'SMTP configuration saved successfully!'
+        })
+        
+    except Exception as e:
+        logger.exception('Request failed')
+        return JsonResponse({
+            'success': False,
+            'message': 'Failed to save configuration'
+        }, status=500)
+
+
+
+# Marketplace View
+@login_required
+@admin_required
+@inertia('Marketplace')
+def marketplace(request):
+    """Marketplace page for installing apps."""
+    # TODO: Fetch actual apps from marketplace API
+    return {
+        'activeSection': 'marketplace',
+        'apps': [],
+    }
+
+
+# Channels API
+@login_required
+@admin_required
+@require_POST
+def channel_toggle(request, channel_id):
+    """Toggle a channel's is_activated state."""
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    if channel.status == 'coming_soon':
+        return JsonResponse({'success': False, 'message': 'This channel is not yet available'}, status=400)
+
+    channel.is_activated = not channel.is_activated
+    channel.save(update_fields=['is_activated', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'is_activated': channel.is_activated,
+        'message': f'{channel.name} {"activated" if channel.is_activated else "deactivated"} successfully',
+    })
+
+
+@login_required
+@admin_required
+@require_POST
+def channel_config(request, channel_id):
+    """Update a channel's configuration settings."""
+    import json
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    try:
+        data = json.loads(request.body)
+        config = data.get('config', {})
+    except json.JSONDecodeError:
+        return JsonResponse({'success': False, 'message': 'Invalid JSON'}, status=400)
+
+    # Merge new config with existing config
+    existing_config = channel.config or {}
+    existing_config.update(config)
+    channel.config = existing_config
+    channel.save(update_fields=['config', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'channel': {
+            'id': channel.id,
+            'channel_id': channel.channel_id,
+            'name': channel.name,
+            'config': channel.config,
+        },
+        'message': f'{channel.name} settings updated successfully',
+    })
+
+
+@login_required
+@admin_required
+@require_POST
+def channel_regenerate_key(request, channel_id):
+    """Regenerate API key for the API channel."""
+    import secrets
+    from .models import Channel
+
+    try:
+        channel = Channel.objects.get(id=channel_id)
+    except Channel.DoesNotExist:
+        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
+
+    if channel.channel_id != 'api':
+        return JsonResponse({'success': False, 'message': 'API key can only be regenerated for API channel'}, status=400)
+
+    # Generate a new API key
+    new_api_key = f"sk_live_{secrets.token_hex(24)}"
+    
+    config = channel.config or {}
+    config['api_key'] = new_api_key
+    channel.config = config
+    channel.save(update_fields=['config', 'updated_at'])
+
+    return JsonResponse({
+        'success': True,
+        'api_key': new_api_key,
+        'message': 'API key regenerated successfully',
+    })
+
+
+def _channels_with_status(request, include_config=True):
+    """Return channels enriched with connected email providers."""
+    from .models import Channel
+
+    fields = [
+        'id', 'channel_id', 'name', 'description', 'icon', 'icon_bg',
+        'icon_color', 'is_activated', 'status', 'is_connected', 'inbox_count', 'order',
+    ]
+    if include_config:
+        fields.append('config')
+    channels = list(Channel.objects.all().values(*fields))
+
+    # Enrich email channel with connected providers
+    email_providers = []
+    try:
+        from modules.email_to_ticket.models import OutlookMailbox, CustomIMAPMailbox
+        if OutlookMailbox.objects.filter(is_active=True).exists():
+            email_providers.append({'name': 'Outlook', 'id': 'outlook'})
+        if CustomIMAPMailbox.objects.filter(is_active=True).exists():
+            email_providers.append({'name': 'Custom IMAP', 'id': 'imap'})
+    except Exception:
+        pass
+
+    for ch in channels:
+        if ch['channel_id'] == 'email':
+            ch['connected_providers'] = email_providers
+
+    return channels
+
+
+@login_required
+@require_GET
+def channels_status(request):
+    """Lightweight channel status list for the sidebar popover."""
+    return JsonResponse({'channels': _channels_with_status(request, include_config=False)})
+
+
+@login_required
+@admin_required
+@inertia('Channels')
+def channels_settings(request):
+    """Channels configuration page."""
+    return {
+        'activeSection': 'channels',
+        'channels': _channels_with_status(request),
+    }
+
+
 # SLA Settings Views
+@login_required
+@admin_required
+@inertia('SLASettings')
+def sla_settings(request):
+    """Combined SLA settings page (policies, business hours, holidays)."""
+    from modules.sla.models import SLASettings
+    
+    # Get SLA policies
+    policies_qs = SLAPolicy.objects.all()
+    priority_order = {'urgent': 0, 'high': 1, 'medium': 2, 'low': 3}
+    policies = sorted([
+        {
+            'id': p.id,
+            'name': p.name,
+            'priority': (p.priority or '').lower(),
+            'first_response': p.get_first_response_display(),
+            'first_response_minutes': p.first_response_time,
+            'resolution_time': p.get_resolution_time_display(),
+            'resolution_time_minutes': p.resolution_time,
+            'status': p.status,
+            'description': p.description,
+            'apply_business_hours': p.apply_business_hours,
+            'apply_holidays': p.apply_holidays,
+            'send_escalation_emails': p.send_escalation_emails,
+            'auto_assign_on_breach': p.auto_assign_on_breach,
+            'pause_on_pending': p.pause_on_pending,
+            'notify_before_breach': p.notify_before_breach,
+            'use_custom_rules': p.use_custom_rules,
+            'custom_rules': p.custom_rules,
+            'rules_logic': p.rules_logic,
+        }
+        for p in policies_qs
+    ], key=lambda p: (priority_order.get(p['priority'], 9), p['name']))
+    
+    # Get business hours
+    try:
+        bh = BusinessHours.objects.filter(is_active=True).first()
+        business_hours = {
+            'id': bh.id,
+            'name': bh.name,
+            'timezone': bh.timezone,
+            'monday_enabled': bh.monday_enabled,
+            'monday_start': bh.monday_start.strftime('%H:%M'),
+            'monday_end': bh.monday_end.strftime('%H:%M'),
+            'tuesday_enabled': bh.tuesday_enabled,
+            'tuesday_start': bh.tuesday_start.strftime('%H:%M'),
+            'tuesday_end': bh.tuesday_end.strftime('%H:%M'),
+            'wednesday_enabled': bh.wednesday_enabled,
+            'wednesday_start': bh.wednesday_start.strftime('%H:%M'),
+            'wednesday_end': bh.wednesday_end.strftime('%H:%M'),
+            'thursday_enabled': bh.thursday_enabled,
+            'thursday_start': bh.thursday_start.strftime('%H:%M'),
+            'thursday_end': bh.thursday_end.strftime('%H:%M'),
+            'friday_enabled': bh.friday_enabled,
+            'friday_start': bh.friday_start.strftime('%H:%M'),
+            'friday_end': bh.friday_end.strftime('%H:%M'),
+            'saturday_enabled': bh.saturday_enabled,
+            'saturday_start': bh.saturday_start.strftime('%H:%M'),
+            'saturday_end': bh.saturday_end.strftime('%H:%M'),
+            'sunday_enabled': bh.sunday_enabled,
+            'sunday_start': bh.sunday_start.strftime('%H:%M'),
+            'sunday_end': bh.sunday_end.strftime('%H:%M'),
+            'pause_outside_hours': bh.pause_outside_hours,
+            'exclude_holidays': bh.exclude_holidays,
+        } if bh else None
+    except Exception:
+        business_hours = None
+    
+    # Get holidays
+    holidays_qs = Holiday.objects.all().order_by('date')
+    holidays = [
+        {
+            'id': h.id,
+            'name': h.name,
+            'date': h.date.strftime('%Y-%m-%d'),
+            'recurring': h.recurring,
+            'status': h.status,
+        }
+        for h in holidays_qs
+    ]
+    
+    # Get SLA enabled status
+    sla_settings_obj = SLASettings.get_settings()
+    
+    return {
+        'activeSection': 'sla',
+        'policies': policies,
+        'business_hours': business_hours,
+        'holidays': holidays,
+        'slaEnabled': sla_settings_obj.enabled,
+    }
+
+
 @login_required
 @inertia('SLAPolicies')
 def sla_policies(request):
@@ -1528,11 +2083,13 @@ def sla_policies(request):
             'description': p.description,
             'apply_business_hours': p.apply_business_hours,
             'apply_holidays': p.apply_holidays,
-            'apply_to_new_tickets': p.apply_to_new_tickets,
             'send_escalation_emails': p.send_escalation_emails,
             'auto_assign_on_breach': p.auto_assign_on_breach,
             'pause_on_pending': p.pause_on_pending,
             'notify_before_breach': p.notify_before_breach,
+            'use_custom_rules': p.use_custom_rules,
+            'custom_rules': p.custom_rules,
+            'rules_logic': p.rules_logic,
         }
         for p in policies_qs
     ]
@@ -1544,16 +2101,29 @@ def sla_policies(request):
 
 
 @login_required
+@admin_required
 @inertia('AddSLAPolicy')
 def sla_policy_add(request):
     """Add SLA policy page."""
+    # Active simple-mode policies, grouped by priority (one allowed per priority)
+    existing_policies = SLAPolicy.objects.filter(status='active', use_custom_rules=False)
+    policies_by_priority = {}
+    for p in existing_policies:
+        policies_by_priority[(p.priority or '').lower()] = {
+            'id': p.id,
+            'name': p.name,
+            'priority': (p.priority or '').lower(),
+        }
+    
     return {
         'activeSection': 'sla-policies',
         'policy': None,
+        'existingPoliciesByPriority': policies_by_priority,
     }
 
 
 @login_required
+@admin_required
 @inertia('AddSLAPolicy')
 def sla_policy_edit(request, policy_id):
     """Edit SLA policy page."""
@@ -1562,23 +2132,40 @@ def sla_policy_edit(request, policy_id):
         policy_data = {
             'id': policy.id,
             'name': policy.name,
-            'priority': policy.priority,
+            'priority': (policy.priority or '').lower(),
             'description': policy.description,
             'status': policy.status,
             'notify_before_breach': policy.notify_before_breach,
             'first_response_time': policy.first_response_time,
             'resolution_time': policy.resolution_time,
-            'apply_to_new_tickets': policy.apply_to_new_tickets,
+            'apply_business_hours': policy.apply_business_hours,
+            'apply_holidays': policy.apply_holidays,
+            'send_escalation_emails': policy.send_escalation_emails,
             'escalate_on_breach': policy.send_escalation_emails,
             'auto_assign_on_breach': policy.auto_assign_on_breach,
+            'pause_on_pending': policy.pause_on_pending,
+            'use_custom_rules': policy.use_custom_rules,
+            'custom_rules': policy.custom_rules,
+            'rules_logic': policy.rules_logic,
         }
     except SLAPolicy.DoesNotExist:
         from django.shortcuts import redirect
-        return redirect('settings:sla_policies')
+        return redirect('sla_settings')
+    
+    # Active simple-mode policies (excluding current), grouped by priority
+    existing_policies = SLAPolicy.objects.filter(status='active', use_custom_rules=False).exclude(id=policy_id)
+    policies_by_priority = {}
+    for p in existing_policies:
+        policies_by_priority[(p.priority or '').lower()] = {
+            'id': p.id,
+            'name': p.name,
+            'priority': (p.priority or '').lower(),
+        }
     
     return {
         'activeSection': 'sla-policies',
         'policy': policy_data,
+        'existingPoliciesByPriority': policies_by_priority,
     }
 
 
@@ -1658,12 +2245,13 @@ def sla_holidays(request):
 
 
 @login_required
+@admin_required
 @inertia('Marketplace')
 def marketplace(request):
     """Marketplace page showing available apps."""
-    apps_qs = App.objects.filter(status__in=['active', 'beta'])
+    apps_qs = App.objects.filter(status__in=['active', 'beta', 'coming_soon'])
     
-    # Get installed apps with trial info
+    # Get installed apps
     installed_apps = {
         ia.app_id: ia 
         for ia in InstalledApp.objects.filter(is_active=True).select_related('app')
@@ -1680,8 +2268,6 @@ def marketplace(request):
             'long_description': app.long_description,
             'icon': app.icon,
             'category': app.category,
-            'price': float(app.price),
-            'is_free': app.is_free,
             'status': app.status,
             'is_featured': app.is_featured,
             'version': app.version,
@@ -1689,14 +2275,7 @@ def marketplace(request):
             'install_count': app.install_count,
             'is_installed': installed_app is not None,
         }
-        
-        # Add trial info if installed
-        if installed_app:
-            app_data['subscription_status'] = installed_app.subscription_status
-            app_data['trial_days_remaining'] = installed_app.trial_days_remaining
-            app_data['is_trial_expired'] = installed_app.is_trial_expired
-            app_data['trial_ends_at'] = installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None
-        
+                
         apps.append(app_data)
     
     return {
@@ -1706,6 +2285,42 @@ def marketplace(request):
 
 
 @login_required
+@admin_required
+@inertia('MarketplaceAppDetail')
+def marketplace_app_detail(request, slug):
+    """Detail page for a marketplace app."""
+    try:
+        app = App.objects.get(slug=slug, status__in=['active', 'beta', 'coming_soon'])
+    except App.DoesNotExist:
+        from django.http import Http404
+        raise Http404("App not found")
+
+    installed_app = InstalledApp.objects.filter(app=app, is_active=True).first()
+
+    app_data = {
+        'id': app.id,
+        'name': app.name,
+        'slug': app.slug,
+        'description': app.description,
+        'long_description': app.long_description,
+        'icon': app.icon,
+        'category': app.category,
+        'status': app.status,
+        'is_featured': app.is_featured,
+        'version': app.version,
+        'developer': app.developer,
+        'install_count': app.install_count,
+        'is_installed': installed_app is not None,
+    }
+
+    return {
+        'activeSection': 'marketplace',
+        'app': app_data,
+    }
+
+
+@login_required
+@admin_required
 @require_http_methods(["POST"])
 def install_app(request, app_id):
     """Install an app."""
@@ -1722,46 +2337,23 @@ def install_app(request, app_id):
                     'message': 'App is already installed'
                 }, status=400)
             
-            # Reactivate the app - NO NEW TRIAL (prevents trial abuse)
+            # Reactivate the app, keeping its settings
             existing_install.is_active = True
             existing_install.uninstalled_at = None
             existing_install.installed_at = timezone.now()
-            
-            # Check if trial was expired
-            if existing_install.subscription_status == 'trial' and existing_install.is_trial_expired:
-                existing_install.subscription_status = 'expired'
-            
             existing_install.save()
             
             # Increment install count
             app.install_count += 1
             app.save()
             
-            trial_days = existing_install.trial_days_remaining
-            
             return JsonResponse({
                 'success': True,
-                'message': f'{app.name} reinstalled! Your original trial period applies.',
-                'installed_app': {
-                    'id': existing_install.id,
-                    'app_name': app.name,
-                    'subscription_status': existing_install.subscription_status,
-                    'trial_ends_at': existing_install.trial_ends_at.isoformat() if existing_install.trial_ends_at else None,
-                    'trial_days_remaining': trial_days,
-                    'is_trial_expired': existing_install.is_trial_expired,
-                }
+                'message': f'{app.name} reinstalled!',
+                'installed_app': {'id': existing_install.id, 'app_name': app.name},
             })
         
-        # First time installation - create with 14-day trial
-        trial_end = timezone.now() + timedelta(days=14) if not app.is_free else None
-        
-        installed_app = InstalledApp.objects.create(
-            app=app,
-            is_active=True,
-            subscription_status='trial' if not app.is_free else 'active',
-            trial_ends_at=trial_end,
-            next_billing_date=trial_end if trial_end else None,
-        )
+        installed_app = InstalledApp.objects.create(app=app, is_active=True)
         
         # Increment install count
         app.install_count += 1
@@ -1770,14 +2362,7 @@ def install_app(request, app_id):
         return JsonResponse({
             'success': True,
             'message': f'{app.name} installed successfully!',
-            'installed_app': {
-                'id': installed_app.id,
-                'app_name': app.name,
-                'subscription_status': installed_app.subscription_status,
-                'trial_ends_at': installed_app.trial_ends_at.isoformat() if installed_app.trial_ends_at else None,
-                'trial_days_remaining': 14 if trial_end else None,
-                'is_trial_expired': False,
-            }
+            'installed_app': {'id': installed_app.id, 'app_name': app.name},
         })
     except App.DoesNotExist:
         return JsonResponse({
@@ -1785,16 +2370,18 @@ def install_app(request, app_id):
             'message': 'App not found'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
 @login_required
+@admin_required
 @require_http_methods(["DELETE"])
 def uninstall_app(request, app_id):
-    """Uninstall an app (soft delete - keeps record for trial tracking)."""
+    """Uninstall an app (soft delete - keeps app settings)."""
     try:
         app = App.objects.get(id=app_id)
         installed_app = InstalledApp.objects.get(app=app, is_active=True)
@@ -1811,7 +2398,7 @@ def uninstall_app(request, app_id):
         
         return JsonResponse({
             'success': True,
-            'message': f'{app.name} uninstalled successfully. Note: Reinstalling will not reset your trial period.'
+            'message': f'{app.name} uninstalled successfully.'
         })
     except InstalledApp.DoesNotExist:
         return JsonResponse({
@@ -1819,49 +2406,40 @@ def uninstall_app(request, app_id):
             'message': 'App is not installed'
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': str(e)
+            'message': 'Something went wrong. Please try again.'
         }, status=500)
 
 
 @login_required
-@inertia('InstalledApps')
-def installed_apps(request):
-    """View installed apps."""
-    installed = InstalledApp.objects.select_related('app').filter(is_active=True)
-    
-    apps = [
-        {
-            'id': ia.id,
-            'app_id': ia.app.id,
-            'name': ia.app.name,
-            'description': ia.app.description,
-            'icon': ia.app.icon,
-            'price': float(ia.app.price),
-            'is_free': ia.app.is_free,
-            'subscription_status': ia.subscription_status,
-            'installed_at': ia.installed_at.isoformat(),
-            'trial_ends_at': ia.trial_ends_at.isoformat() if ia.trial_ends_at else None,
-            'next_billing_date': ia.next_billing_date.isoformat() if ia.next_billing_date else None,
-            'settings': ia.settings,
-        }
-        for ia in installed
-    ]
-    
-    return {
-        'apps': apps,
-    }
-
-
-@login_required
+@admin_required
 @inertia('SettingsViews')
 def settings_views(request):
     """Views management page."""
-    from .models import SettingsView
+    from .models import SettingsView, InstalledApp, App
     
     # Get current type from query params (default to TICKET)
     current_type = request.GET.get('type', 'TICKET')
+    
+    # Check which modules are installed
+    installed_modules = {
+        'tasks': False,
+        'kb': False,
+    }
+    
+    # Check for Tasks module
+    tasks_app = App.objects.filter(slug='tasks-projects').first()
+    if tasks_app:
+        tasks_installed = InstalledApp.objects.filter(app=tasks_app, is_active=True).exists()
+        installed_modules['tasks'] = tasks_installed
+    
+    # Check for KB module
+    kb_app = App.objects.filter(slug='knowledge-base').first()
+    if kb_app:
+        kb_installed = InstalledApp.objects.filter(app=kb_app, is_active=True).exists()
+        installed_modules['kb'] = kb_installed
     
     # Get all views grouped by type
     all_views = SettingsView.objects.all()
@@ -1887,10 +2465,12 @@ def settings_views(request):
         'activeSection': 'views',
         'views': views_by_type,
         'currentType': current_type,
+        'installedModules': installed_modules,
     }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def toggle_view(request, view_id):
     """Toggle a view's active status."""
@@ -1915,13 +2495,15 @@ def toggle_view(request, view_id):
             'message': 'View not found',
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': f'Failed to update view: {str(e)}',
+            'message': 'Failed to update view',
         }, status=500)
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def reorder_views(request):
     """Reorder views based on the provided order."""
@@ -1954,13 +2536,15 @@ def reorder_views(request):
             'message': 'Views reordered successfully',
         })
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': f'Failed to reorder views: {str(e)}',
+            'message': 'Failed to reorder views',
         }, status=500)
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def set_default_view(request, view_id):
     """Set a view as the default for its type."""
@@ -1989,136 +2573,186 @@ def set_default_view(request, view_id):
             'message': 'View not found',
         }, status=404)
     except Exception as e:
+        logger.exception('Request failed')
         return JsonResponse({
             'success': False,
-            'message': f'Failed to set default view: {str(e)}',
+            'message': 'Failed to set default view',
         }, status=500)
 
 
-# =============================================================================
-# CHANNELS
-# =============================================================================
+# ============================================
+# User Profile Stats, Audit Logs, and Devices
+# ============================================
 
 @login_required
-@inertia('Channels')
-def channels_settings(request):
-    """Channels configuration page."""
-    from .models import Channel
-
-    # Seed default channels if none exist
-    if not Channel.objects.exists():
-        Channel.seed_default_channels()
-
-    channels = list(Channel.objects.all().values(
-        'id', 'channel_id', 'name', 'description', 'icon', 'icon_bg',
-        'icon_color', 'is_activated', 'status', 'is_connected', 'inbox_count', 'order', 'config',
-    ))
-
-    # Enrich email channel with connected provider info
-    try:
-        from modules.email_to_ticket.models import CustomIMAPMailbox
-        imap_count = CustomIMAPMailbox.objects.filter(is_active=True).count()
-        for ch in channels:
-            if ch['channel_id'] == 'email':
-                ch['connected_providers'] = []
-                if imap_count > 0:
-                    ch['connected_providers'].append({'id': 'imap', 'name': 'Custom IMAP', 'count': imap_count})
-                    ch['is_connected'] = True
-                break
-    except Exception:
-        pass
-
-    return {
-        'activeSection': 'channels',
-        'channels': channels,
-    }
-
-
-@login_required
-@require_http_methods(["POST"])
-def channel_toggle(request, channel_id):
-    """Toggle a channel's is_activated state."""
-    from .models import Channel
-
-    try:
-        channel = Channel.objects.get(id=channel_id)
-    except Channel.DoesNotExist:
-        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
-
-    if channel.status == 'coming_soon':
-        return JsonResponse({'success': False, 'message': 'This channel is not yet available'}, status=400)
-
-    channel.is_activated = not channel.is_activated
-    channel.save(update_fields=['is_activated', 'updated_at'])
-
+@admin_required
+@require_http_methods(["GET"])
+def api_user_stats(request):
+    """Get ticket stats for the current user."""
+    from modules.ticket.models import Ticket
+    from django.db.models import Q
+    
+    user = request.user
+    
+    # Get ticket counts by status for assigned tickets
+    assigned_tickets = Ticket.objects.filter(assignee=user)
+    
+    open_count = assigned_tickets.filter(
+        status__in=['new', 'open', 'in_progress']
+    ).count()
+    
+    closed_count = assigned_tickets.filter(
+        status__in=['resolved', 'closed']
+    ).count()
+    
+    hold_count = assigned_tickets.filter(
+        status='pending'
+    ).count()
+    
+    # Count SLA breached tickets (using the related TicketSLA model)
+    breached_count = assigned_tickets.filter(
+        Q(sla__response_breached=True) | Q(sla__resolution_breached=True)
+    ).exclude(
+        status__in=['resolved', 'closed']
+    ).count()
+    
     return JsonResponse({
         'success': True,
-        'is_activated': channel.is_activated,
-        'message': f'{channel.name} {"activated" if channel.is_activated else "deactivated"} successfully',
+        'stats': {
+            'open': open_count,
+            'closed': closed_count,
+            'hold': hold_count,
+            'breached': breached_count,
+        }
+    })
+
+
+@login_required
+@admin_required
+@require_http_methods(["GET"])
+def api_user_audit_logs(request):
+    """Get paginated audit logs for the current user."""
+    from modules.users.models import AuditLog
+    
+    user = request.user
+    page = int(request.GET.get('page', 1))
+    per_page = int(request.GET.get('per_page', 10))
+    
+    audit_logs = AuditLog.objects.filter(user=user).order_by('-created_at')
+    
+    paginator = Paginator(audit_logs, per_page)
+    page_obj = paginator.get_page(page)
+    
+    logs_data = []
+    for log in page_obj:
+        logs_data.append({
+            'id': log.id,
+            'action': log.action,
+            'actionDisplay': log.get_action_display(),
+            'description': log.description,
+            'ipAddress': log.ip_address,
+            'browser': log.browser,
+            'os': log.os,
+            'deviceType': log.device_type,
+            'location': log.location,
+            'status': log.status,
+            'createdAt': log.created_at.isoformat(),
+        })
+    
+    return JsonResponse({
+        'success': True,
+        'logs': logs_data,
+        'pagination': {
+            'page': page,
+            'perPage': per_page,
+            'totalPages': paginator.num_pages,
+            'totalItems': paginator.count,
+            'hasNext': page_obj.has_next(),
+            'hasPrevious': page_obj.has_previous(),
+        }
+    })
+
+
+@login_required
+@require_http_methods(["GET"])
+def api_user_devices(request):
+    """Get paginated devices for the current user."""
+    from modules.users.models import UserDevice
+    
+    user = request.user
+    page = int(request.GET.get('page', 1))
+    per_page = int(request.GET.get('per_page', 10))
+    
+    devices = UserDevice.objects.filter(user=user).order_by('-last_active')
+    
+    paginator = Paginator(devices, per_page)
+    page_obj = paginator.get_page(page)
+    
+    devices_data = []
+    for device in page_obj:
+        devices_data.append({
+            'id': device.id,
+            'deviceId': device.device_id,
+            'deviceName': device.device_name,
+            'deviceType': device.device_type,
+            'browser': device.browser,
+            'browserVersion': device.browser_version,
+            'os': device.os,
+            'osVersion': device.os_version,
+            'ipAddress': device.ip_address,
+            'location': device.location,
+            'isCurrent': device.is_current,
+            'isTrusted': device.is_trusted,
+            'lastActive': device.last_active.isoformat(),
+            'firstSeen': device.first_seen.isoformat(),
+        })
+    
+    return JsonResponse({
+        'success': True,
+        'devices': devices_data,
+        'pagination': {
+            'page': page,
+            'perPage': per_page,
+            'totalPages': paginator.num_pages,
+            'totalItems': paginator.count,
+            'hasNext': page_obj.has_next(),
+            'hasPrevious': page_obj.has_previous(),
+        }
     })
 
 
 @login_required
 @require_http_methods(["POST"])
-def channel_config(request, channel_id):
-    """Update a channel's configuration settings."""
-    from .models import Channel
-
+def api_revoke_device(request, device_id):
+    """Revoke a user device/session."""
+    from modules.users.models import UserDevice
+    from django.contrib.sessions.models import Session
+    
+    user = request.user
+    
     try:
-        channel = Channel.objects.get(id=channel_id)
-    except Channel.DoesNotExist:
-        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
-
-    try:
-        data = json.loads(request.body)
-        config = data.get('config', {})
-    except json.JSONDecodeError:
-        return JsonResponse({'success': False, 'message': 'Invalid JSON'}, status=400)
-
-    existing_config = channel.config or {}
-    existing_config.update(config)
-    channel.config = existing_config
-    channel.save(update_fields=['config', 'updated_at'])
-
-    return JsonResponse({
-        'success': True,
-        'channel': {
-            'id': channel.id,
-            'channel_id': channel.channel_id,
-            'name': channel.name,
-            'config': channel.config,
-        },
-        'message': f'{channel.name} settings updated successfully',
-    })
-
-
-@login_required
-@require_http_methods(["POST"])
-def channel_regenerate_key(request, channel_id):
-    """Regenerate API key for the API channel."""
-    import secrets
-    from .models import Channel
-
-    try:
-        channel = Channel.objects.get(id=channel_id)
-    except Channel.DoesNotExist:
-        return JsonResponse({'success': False, 'message': 'Channel not found'}, status=404)
-
-    if channel.channel_id != 'api':
-        return JsonResponse({'success': False, 'message': 'API key can only be regenerated for API channel'}, status=400)
-
-    new_api_key = f"sk_live_{secrets.token_hex(24)}"
-
-    config = channel.config or {}
-    config['api_key'] = new_api_key
-    channel.config = config
-    channel.save(update_fields=['config', 'updated_at'])
-
-    return JsonResponse({
-        'success': True,
-        'api_key': new_api_key,
-        'message': 'API key regenerated successfully',
-    })
+        device = UserDevice.objects.get(id=device_id, user=user)
+        
+        # Delete the session if it exists
+        if device.session_key:
+            try:
+                Session.objects.filter(session_key=device.session_key).delete()
+            except Exception:
+                pass
+        
+        # Delete the device record
+        device.delete()
+        
+        return JsonResponse({
+            'success': True,
+            'message': 'Device revoked successfully'
+        })
+        
+    except UserDevice.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Device not found'
+        }, status=404)
 
 
 # =============================================================================
@@ -2126,6 +2760,7 @@ def channel_regenerate_key(request, channel_id):
 # =============================================================================
 
 @login_required
+@admin_required
 @inertia('EmailProviderSetup')
 def email_imap_setup(request):
     """Email IMAP provider setup page."""
@@ -2149,16 +2784,25 @@ def email_imap_setup(request):
             for mb in mailboxes
         ]
 
+    # Show the saved routing options (never the password)
+    current = mailboxes.first()
+    config = {
+        'auto_create_tickets': current.auto_create_tickets,
+        'auto_reply': current.auto_reply,
+        'default_priority': current.default_priority,
+    } if current else {}
+
     return {
         'title': 'Custom IMAP/SMTP Integration',
         'provider_id': 'imap',
         'is_connected': is_connected,
-        'config': {},
+        'config': config,
         'connected_mailboxes': connected_mailboxes,
     }
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def custom_imap_connect(request):
     """Connect a custom IMAP mailbox."""
@@ -2197,8 +2841,9 @@ def custom_imap_connect(request):
         mail.login(email_addr, password)
         mail.select('INBOX')
         mail.logout()
-    except Exception as e:
-        return JsonResponse({'success': False, 'error': f'IMAP connection failed: {str(e)}'})
+    except Exception:
+        logger.exception('Custom IMAP connection test failed')
+        return JsonResponse({'success': False, 'error': 'IMAP connection failed. Check the server, port and credentials.'})
 
     mailbox, created = CustomIMAPMailbox.objects.update_or_create(
         email_address=email_addr,
@@ -2226,29 +2871,40 @@ def custom_imap_connect(request):
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def custom_imap_configure(request):
     """Configure custom IMAP mailbox settings."""
     from modules.email_to_ticket.models import CustomIMAPMailbox
 
-    auto_create_tickets = request.POST.get('auto_create_tickets', 'true') == 'true'
-    auto_reply = request.POST.get('auto_reply', 'false') == 'true'
-    default_priority = request.POST.get('default_priority', 'normal')
-    folder_to_watch = request.POST.get('folder_to_watch', 'INBOX')
+    # The setup page posts JSON; plain form posts are accepted too
+    if request.content_type == 'application/json':
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid request'}, status=400)
+    else:
+        data = request.POST
 
-    mailboxes = CustomIMAPMailbox.objects.filter(is_active=True)
-    mailboxes.update(
-        auto_create_tickets=auto_create_tickets,
-        auto_reply=auto_reply,
-        default_priority=default_priority,
-        folder_to_watch=folder_to_watch,
-    )
+    def flag(name):
+        return str(data.get(name)).lower() in ('true', '1', 'on')
+
+    # Only change what was sent, so omitted options keep their saved values
+    changes = {name: flag(name) for name in ('auto_create_tickets', 'auto_reply') if name in data}
+    if data.get('default_priority') in ('low', 'normal', 'high', 'urgent'):
+        changes['default_priority'] = data['default_priority']
+    if data.get('folder_to_watch'):
+        changes['folder_to_watch'] = data['folder_to_watch']
+
+    if changes:
+        CustomIMAPMailbox.objects.filter(is_active=True).update(**changes)
 
     from django.shortcuts import redirect
     return redirect('email_imap_setup')
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def custom_imap_disconnect(request):
     """Disconnect a custom IMAP mailbox."""
@@ -2277,6 +2933,7 @@ def custom_imap_disconnect(request):
 
 
 @login_required
+@admin_required
 @require_http_methods(["POST"])
 def custom_imap_test(request):
     """Test custom IMAP mail connection."""
@@ -2287,6 +2944,9 @@ def custom_imap_test(request):
         return JsonResponse({'success': False, 'error': 'No connected mailbox found'})
 
     success, message = mailbox.test_connection()
+    if not success:
+        logger.warning('Custom IMAP test failed: %s', message)
+        message = 'Connection failed. Check the server, port and credentials.'
 
     if success:
         return JsonResponse({
@@ -2298,6 +2958,7 @@ def custom_imap_test(request):
 
 
 @login_required
+@admin_required
 def custom_imap_list_mailboxes(request):
     """List connected custom IMAP mailboxes."""
     from modules.email_to_ticket.models import CustomIMAPMailbox

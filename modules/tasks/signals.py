@@ -23,11 +23,6 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def get_current_schema():
-    """Get the current tenant schema name."""
-    return 'default'
-
-
 def get_notification_settings():
     """Get notification settings (cached per request if possible)."""
     try:
@@ -74,14 +69,12 @@ def send_task_notifications(sender, instance, created, **kwargs):
     Checks NotificationSettings before sending any email.
     Emails are sent as background tasks for better UI responsiveness.
     """
-    schema_name = get_current_schema()
     
     try:
         if created:
             # === NEW TASK ASSIGNED ===
             if instance.assignee and is_notification_enabled('notify_task_assigned'):
                 send_task_email_task.delay(
-                    schema_name=schema_name,
                     template_type='new_task_alert',
                     task_id=instance.id,
                     to_user_id=instance.assignee.id,
@@ -98,7 +91,6 @@ def send_task_notifications(sender, instance, created, **kwargs):
                 for watcher in instance.watchers.all():
                     if watcher != instance.assignee:
                         send_task_email_task.delay(
-                            schema_name=schema_name,
                             template_type='new_task_alert',
                             task_id=instance.id,
                             to_user_id=watcher.id,
@@ -120,7 +112,6 @@ def send_task_notifications(sender, instance, created, **kwargs):
                     # Notify assignee about status change
                     if instance.assignee:
                         send_task_email_task.delay(
-                            schema_name=schema_name,
                             template_type='task_status_changed',
                             task_id=instance.id,
                             to_user_id=instance.assignee.id,
@@ -136,7 +127,6 @@ def send_task_notifications(sender, instance, created, **kwargs):
                     # Notify watchers
                     for watcher in instance.watchers.exclude(id=instance.assignee_id if instance.assignee else 0):
                         send_task_email_task.delay(
-                            schema_name=schema_name,
                             template_type='task_status_changed',
                             task_id=instance.id,
                             to_user_id=watcher.id,
@@ -152,7 +142,6 @@ def send_task_notifications(sender, instance, created, **kwargs):
             if original['assignee_id'] != instance.assignee_id:
                 if instance.assignee and is_notification_enabled('notify_task_assigned'):
                     send_task_email_task.delay(
-                        schema_name=schema_name,
                         template_type='new_task_alert',
                         task_id=instance.id,
                         to_user_id=instance.assignee.id,
@@ -176,7 +165,6 @@ def send_task_comment_notifications(sender, instance, created, **kwargs):
     if not created:
         return
     
-    schema_name = get_current_schema()
     task = instance.task
     
     try:
@@ -186,21 +174,20 @@ def send_task_comment_notifications(sender, instance, created, **kwargs):
         
         # Queue comment notification
         send_task_comment_notification_task.delay(
-            schema_name=schema_name,
             task_id=task.id,
             comment_id=instance.id
         )
         logger.info(f"Queued comment notification for task {task.id}")
         
         # Check for mentions and send mention notifications
-        if is_notification_enabled('notify_task_mentioned'):
-            _process_task_mentions(instance, schema_name)
+        if is_notification_enabled('notify_ticket_mentioned'):
+            _process_task_mentions(instance)
             
     except Exception as e:
         logger.error(f"Failed to queue task comment notification: {e}")
 
 
-def _process_task_mentions(comment, schema_name):
+def _process_task_mentions(comment):
     """Extract @mentions from comment and send notifications."""
     from django.contrib.auth import get_user_model
     User = get_user_model()
@@ -222,7 +209,6 @@ def _process_task_mentions(comment, schema_name):
                 continue
             
             send_task_mention_notification_task.delay(
-                schema_name=schema_name,
                 task_id=comment.task_id,
                 comment_id=comment.id,
                 mentioned_user_id=mentioned_user.id

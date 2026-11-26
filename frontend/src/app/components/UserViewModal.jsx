@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react'
 import Modal, { ModalHeader, ModalBody } from './Modal'
 import { COLORS } from '../constants/theme'
 import { useTimezone } from '../context/TimezoneContext'
+import api from '../../utils/axios'
+import { Briefcase, Building2, Ticket, CalendarDays, Users, CheckCircle, ExternalLink } from 'lucide-react'
+import Tabs from './Tabs'
 
 export default function UserViewModal({ isOpen, onClose, userId }) {
   const [activeTab, setActiveTab] = useState('info')
@@ -12,10 +15,9 @@ export default function UserViewModal({ isOpen, onClose, userId }) {
   useEffect(() => {
     if (isOpen && userId) {
       setLoading(true)
-      fetch(`/settings/team/users/${userId}/view/`)
-        .then(res => res.json())
-        .then(data => {
-          setUserData(data)
+      api.get(`/administration/team/users/${userId}/view/`)
+        .then(res => {
+          setUserData(res.data)
           setTimeout(() => setLoading(false), 1000) // Simulate loading
         })
         .catch(() => {
@@ -80,49 +82,27 @@ export default function UserViewModal({ isOpen, onClose, userId }) {
                 </div>
                 <p className="text-gray-600 mt-1">{userData.email}</p>
                 <div className="flex items-center gap-4 mt-3 text-sm text-gray-500">
-                  {userData.role && <span>👔 {userData.role}</span>}
-                  {userData.organization && <span>🏢 {userData.organization}</span>}
-                  <span>🎫 {userData.ticket_count || 0} tickets</span>
-                  <span>📅 Joined {formatDate(userData.created_at)}</span>
+                  {userData.role && <span className="inline-flex items-center gap-1"><Briefcase className="w-3.5 h-3.5" /> {userData.role}</span>}
+                  {userData.organization && <span className="inline-flex items-center gap-1"><Building2 className="w-3.5 h-3.5" /> {userData.organization}</span>}
+                  <span className="inline-flex items-center gap-1"><Ticket className="w-3.5 h-3.5" /> {userData.ticket_count || 0} tickets</span>
+                  <span className="inline-flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5" /> Joined {formatDate(userData.created_at)}</span>
                 </div>
               </div>
             </div>
           </ModalHeader>
 
           {/* Tabs */}
-          <div className="border-b border-gray-200">
-            <div className="flex px-6">
-              <button
-                onClick={() => setActiveTab('info')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'info'
-                    ? 'border-[#4a154b] text-[#4a154b]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Information
-              </button>
-              <button
-                onClick={() => setActiveTab('tickets')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'tickets'
-                    ? 'border-[#4a154b] text-[#4a154b]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Tickets ({userData.tickets?.length || 0})
-              </button>
-              <button
-                onClick={() => setActiveTab('groups')}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === 'groups'
-                    ? 'border-[#4a154b] text-[#4a154b]'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Groups ({userData.groups?.length || 0})
-              </button>
-            </div>
+          <div className="border-b border-gray-200 px-6 py-2">
+            <Tabs
+              label="User sections"
+              active={activeTab}
+              onChange={setActiveTab}
+              tabs={[
+                { id: 'info', label: 'Information' },
+                { id: 'tickets', label: 'Tickets', count: userData.tickets?.length || 0 },
+                { id: 'groups', label: 'Groups', count: userData.groups?.length || 0 },
+              ]}
+            />
           </div>
 
           {/* Tab Content */}
@@ -165,7 +145,7 @@ export default function UserViewModal({ isOpen, onClose, userId }) {
                           key={group.id}
                           className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800"
                         >
-                          👥 {group.name}
+                          <Users className="w-3.5 h-3.5" /> {group.name}
                         </span>
                       ))}
                     </div>
@@ -180,9 +160,7 @@ export default function UserViewModal({ isOpen, onClose, userId }) {
                       <div className="space-y-2">
                         {userData.permissions.map((permission, index) => (
                           <div key={index} className="flex items-center gap-2 text-sm text-gray-700">
-                            <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
+                            <CheckCircle className="w-4 h-4 text-green-500" />
                             {permission}
                           </div>
                         ))}
@@ -279,10 +257,10 @@ function TicketCard({ ticket }) {
         </div>
 
         <a
-          href={`/tickets/${ticket.id}/`}
-          className="ml-4 text-sm text-blue-600 hover:text-blue-700"
+          href={`/tickets/${ticket.uuid}/`}
+          className="ml-4 text-sm text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
         >
-          View
+          <ExternalLink className="w-3.5 h-3.5" /> View
         </a>
       </div>
     </div>

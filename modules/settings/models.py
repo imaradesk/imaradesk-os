@@ -1,6 +1,51 @@
 from django.db import models
 from django.utils import timezone
+from cryptography.fernet import Fernet
+from django.conf import settings
+import base64
 
+class SMTP(models.Model):
+    enabled = models.BooleanField(default=False, verbose_name="SMTP Enabled", help_text="Whether to use custom SMTP instead of system default")
+    active = models.BooleanField(default=True, verbose_name="Active", help_text="Whether this SMTP configuration is currently active")
+    host = models.CharField(max_length=255, verbose_name="SMTP Host")
+    port = models.PositiveIntegerField(verbose_name="SMTP Port")
+    username = models.CharField(max_length=255, verbose_name="SMTP Username")
+    password_encrypted = models.TextField(verbose_name="SMTP Password (Encrypted)", blank=True, default='')
+    use_tls = models.BooleanField(default=True, verbose_name="Use TLS")
+    use_ssl = models.BooleanField(default=False, verbose_name="Use SSL")
+    default_from_email = models.EmailField(verbose_name="Default From Email")
+    sender_name = models.CharField(max_length=255, blank=True, null=True, verbose_name="Sender Name")
+    reply_to_email = models.EmailField(blank=True, null=True, verbose_name="Reply-To Email")
+    
+    @staticmethod
+    def _get_fernet():
+        """Get Fernet instance using Django's SECRET_KEY."""
+        # Use first 32 bytes of SECRET_KEY as encryption key
+        key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode())
+        return Fernet(key)
+    
+    def set_password(self, raw_password):
+        """Encrypt and store the SMTP password."""
+        if raw_password:
+            fernet = self._get_fernet()
+            self.password_encrypted = fernet.encrypt(raw_password.encode()).decode()
+        else:
+            self.password_encrypted = ''
+    
+    def get_password(self):
+        """Decrypt and return the SMTP password."""
+        if self.password_encrypted:
+            try:
+                fernet = self._get_fernet()
+                return fernet.decrypt(self.password_encrypted.encode()).decode()
+            except Exception:
+                return ''
+        return ''
+
+    class Meta:
+        verbose_name = "SMTP Setting"
+        verbose_name_plural = "SMTP Settings"
+        db_table = 'setting_smtp'
 
 class App(models.Model):
     """
@@ -30,17 +75,13 @@ class App(models.Model):
     icon = models.CharField(max_length=50, default='puzzle', help_text="Icon name or emoji")
     category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='other')
     
-    # Pricing
-    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Monthly price in USD")
-    is_free = models.BooleanField(default=False, help_text="Is this app free?")
-    
     # Status
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     is_featured = models.BooleanField(default=False, help_text="Show in featured apps")
     
     # Metadata
     version = models.CharField(max_length=20, default='1.0.0')
-    developer = models.CharField(max_length=200, default='ImaraDesk')
+    developer = models.CharField(max_length=200, default='Imaradesk')
     install_count = models.IntegerField(default=0, help_text="Number of installations")
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -59,28 +100,13 @@ class App(models.Model):
 class InstalledApp(models.Model):
     """
     Tracks which apps are installed for each tenant.
-    Records are never deleted to prevent trial abuse.
+    Uninstalling deactivates the record so app settings survive a reinstall.
     """
     app = models.ForeignKey(App, on_delete=models.CASCADE, related_name='installations')
     installed_at = models.DateTimeField(auto_now_add=True, null=True, blank=True,)
     first_installed_at = models.DateTimeField(auto_now_add=True, null=True, blank=True, help_text="Original installation date - never changes")
     is_active = models.BooleanField(default=True, help_text="Is the app currently active?")
     uninstalled_at = models.DateTimeField(null=True, blank=True, help_text="When the app was uninstalled")
-    
-    # Subscription info
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('suspended', 'Suspended'),
-            ('expired', 'Expired'),
-        ],
-        default='trial'
-    )
-    trial_ends_at = models.DateTimeField(null=True, blank=True)
-    next_billing_date = models.DateTimeField(null=True, blank=True)
     
     # Settings (JSON field for app-specific configuration)
     settings = models.JSONField(default=dict, blank=True)
@@ -94,27 +120,7 @@ class InstalledApp(models.Model):
         db_table = 'setting_installed_apps'
     
     def __str__(self):
-        return f"{self.app.name} - {self.subscription_status}"
-    
-    @property
-    def is_trial_expired(self):
-        """Check if trial period has ended."""
-        if self.subscription_status != 'trial':
-            return False
-        if self.trial_ends_at is None:
-            return False
-        from django.utils import timezone
-        return timezone.now() > self.trial_ends_at
-    
-    @property
-    def trial_days_remaining(self):
-        """Calculate remaining trial days."""
-        if self.trial_ends_at is None:
-            return None
-        from django.utils import timezone
-        remaining = self.trial_ends_at - timezone.now()
-        days = remaining.days
-        return max(0, days)
+        return self.app.name
 
 
 class EmailTemplate(models.Model):
@@ -167,11 +173,9 @@ class EmailTemplate(models.Model):
         ('welcome_user', 'Welcome Email'),
         ('password_reset', 'Password Reset'),
         
-        # KB templates
-        ('kb_article_published', 'KB Article Published'),
-        ('kb_article_updated', 'KB Article Updated'),
-        ('kb_article_approved', 'KB Article Approved'),
-        ('kb_article_rejected', 'KB Article Rejected'),
+        # Survey templates
+        ('survey_invitation', 'Survey Invitation'),
+        ('survey_reminder', 'Survey Reminder'),
         
         # Report templates
         ('weekly_report', 'Weekly Report'),
@@ -216,47 +220,12 @@ class EmailTemplate(models.Model):
         """
         Returns the base HTML email template wrapper.
         The body content will be inserted where {{email_body}} placeholder is.
+        Shared makaosmart-style design lives in
+        shared.utilities.templates.email_base; this stays a thin alias so
+        every tenant mail picks up the new look with zero sender changes.
         """
-        return '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{email_title}}</title>
-</head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
-        <tr>
-            <td style="padding: 40px 20px;">
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                    <!-- Header -->
-                    <tr>
-                        <td style="padding: 32px 40px 24px 40px; border-bottom: 1px solid #e5e5e5;">
-                            <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #1a1a1a;">{{email_title}}</h1>
-                        </td>
-                    </tr>
-                    <!-- Body Content -->
-                    <tr>
-                        <td style="padding: 32px 40px;">
-                            <div style="font-size: 15px; line-height: 1.6; color: #4a4a4a;">
-{{email_body}}
-                            </div>
-                        </td>
-                    </tr>
-                    <!-- Footer -->
-                    <tr>
-                        <td style="padding: 24px 40px; background-color: #fafafa; border-top: 1px solid #e5e5e5;">
-                            <p style="margin: 0; font-size: 13px; color: #888888; text-align: center;">
-                                {{company_name}}
-                            </p>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>'''
+        from shared.utilities.templates.email_base import tenant_base_template
+        return tenant_base_template()
     
     def render(self, context):
         """
@@ -277,33 +246,29 @@ class EmailTemplate(models.Model):
                 return str(ctx.get(var_name, match.group(0)))
             return re.sub(r'{{\s*([^}]+)\s*}}', replacer, text)
         
-        # Convert plain text body to HTML paragraphs
-        def text_to_html(text):
-            if not text:
-                return ''
-            # First replace variables in the text
-            text = replace_vars(text, context)
-            # Split by double newlines for paragraphs
-            paragraphs = text.strip().split('\n\n')
-            html_parts = []
-            for para in paragraphs:
-                # Handle single line breaks within paragraphs
-                lines = para.strip().split('\n')
-                formatted_lines = '<br>'.join(line.strip() for line in lines if line.strip())
-                if formatted_lines:
-                    html_parts.append(f'<p style="margin: 0 0 16px 0;">{formatted_lines}</p>')
-            return '\n'.join(html_parts)
-        
+        from shared.utilities.templates.email_base import text_to_email_html, strip_trailing_signoff
+
         rendered_subject = replace_vars(self.subject, context)
-        
-        # Convert body_text to HTML and wrap in base template
-        body_html_content = text_to_html(self.body_text or self.body_html)
-        
+
+        # Lay out the plain-text body (details panels, buttons, quotes) with
+        # tokens still in place, then wrap it in the base template
+        body_html_content = text_to_email_html(self.body_text or self.body_html)
+
+        # The footer carries the sign-off, so drop a sign-off the body repeats
+        body_html_content = strip_trailing_signoff(body_html_content)
+
         # Get the base template and insert content
-        base_template = self.get_base_template()
+        try:
+            use_business_name = NotificationSettings.get_settings().use_business_name_in_footer
+        except Exception:
+            use_business_name = False
+        from shared.utilities.templates.email_base import tenant_base_template
+        base_template = tenant_base_template(use_business_name=use_business_name)
         rendered_html = base_template.replace('{{email_title}}', self.name)
         rendered_html = rendered_html.replace('{{email_body}}', body_html_content)
-        rendered_html = replace_vars(rendered_html, context)
+        # Multi-line values (comments, messages) keep their line breaks in HTML
+        html_context = {k: str(v).replace('\r\n', '\n').replace('\n', '<br>') for k, v in context.items()}
+        rendered_html = replace_vars(rendered_html, html_context)
         
         # Plain text version
         rendered_text = replace_vars(self.body_text, context) if self.body_text else ''
@@ -500,7 +465,7 @@ class NotificationSettings(models.Model):
         help_text="When a new ticket is submitted"
     )
     notify_ticket_assigned = models.BooleanField(
-        default=True,
+        default=False,
         help_text="When a ticket is assigned"
     )
     notify_ticket_status_changed = models.BooleanField(
@@ -508,64 +473,93 @@ class NotificationSettings(models.Model):
         help_text="When ticket status is updated (open, pending, resolved, closed)"
     )
     notify_ticket_priority_changed = models.BooleanField(
-        default=True,
+        default=False,
         help_text="When ticket priority is updated (low, medium, high, urgent)"
     )
     notify_new_comment = models.BooleanField(
         default=True,
         help_text="When someone comments on a ticket"
     )
-    notify_ticket_reassigned = models.BooleanField(
-        default=False,
-        help_text="When a ticket is reassigned to another agent"
-    )
-    notify_ticket_group_assigned = models.BooleanField(
-        default=True,
-        help_text="When a ticket is assigned to a group (notifies all group members)"
-    )
     notify_ticket_merged = models.BooleanField(
-        default=True,
+        default=False,
         help_text="When tickets are merged together"
     )
     notify_ticket_mentioned = models.BooleanField(
-        default=True,
+        default=False,
         help_text="When someone is mentioned using @username in a ticket"
     )
     
-    # KB Notifications
-    notify_kb_article_published = models.BooleanField(
+    # Task Notifications
+    notify_task_assigned = models.BooleanField(
         default=False,
-        help_text="When a knowledge base article is published"
+        help_text="When a task is assigned to you"
     )
+    notify_task_status_changed = models.BooleanField(
+        default=True,
+        help_text="When task status is updated"
+    )
+    notify_task_comment = models.BooleanField(
+        default=True,
+        help_text="When someone comments on your task"
+    )
+    notify_task_due_soon = models.BooleanField(
+        default=True,
+        help_text="24 hours before task is due"
+    )
+    notify_task_overdue = models.BooleanField(
+        default=False,
+        help_text="When a task passes its due date"
+    )
+    # KB Notifications
     notify_kb_article_updated = models.BooleanField(
         default=False,
-        help_text="When a knowledge base article is updated"
-    )
-    notify_kb_feedback_received = models.BooleanField(
-        default=False,
-        help_text="When feedback is received on a knowledge base article"
+        help_text="When an article you follow is updated"
     )
     notify_kb_article_approved = models.BooleanField(
         default=False,
-        help_text="When a knowledge base article is approved"
+        help_text="When your draft article is approved"
+    )
+    
+    # Asset Notifications
+    notify_asset_assigned = models.BooleanField(
+        default=True,
+        help_text="When an asset is assigned to you"
+    )
+    notify_asset_status_changed = models.BooleanField(
+        default=True,
+        help_text="When asset status is updated"
+    )
+    notify_asset_maintenance_due = models.BooleanField(
+        default=True,
+        help_text="When asset maintenance is scheduled"
+    )
+    notify_asset_warranty_expiring = models.BooleanField(
+        default=True,
+        help_text="30 days before warranty expires"
+    )
+    
+    # Survey Notifications
+    notify_survey_response = models.BooleanField(
+        default=False,
+        help_text="When someone responds to your survey"
+    )
+    notify_survey_completed = models.BooleanField(
+        default=False,
+        help_text="When a survey reaches 100% completion"
+    )
+    notify_survey_reminder = models.BooleanField(
+        default=False,
+        help_text="Remind about incomplete survey responses"
     )
     
     # SLA Notifications
-    notify_sla_response_warning = models.BooleanField(
-        default=False,
-        help_text="When a ticket is approaching first response SLA breach"
-    )
-    notify_sla_response_breached = models.BooleanField(
-        default=False,
-        help_text="When a ticket has breached first response SLA"
-    )
     notify_sla_resolution_warning = models.BooleanField(
         default=False,
-        help_text="When a ticket is approaching resolution SLA breach"
+        help_text="When SLA resolution time is almost breaching (warning threshold)"
     )
     notify_sla_resolution_breached = models.BooleanField(
         default=False,
-        help_text="When a ticket has breached resolution SLA"
+        help_text="When SLA resolution time has been breached"
     )
     
     # Reports
@@ -579,6 +573,38 @@ class NotificationSettings(models.Model):
         help_text="Email address to receive weekly reports"
     )
     
+    # Email branding
+    use_business_name_in_footer = models.BooleanField(
+        default=False,
+        help_text="Sign emails 'The <business name> Team' instead of 'The Imaradesk Team'"
+    )
+    
+    # No longer shown in the UI; kept so upgraded installs keep their saved choices
+    notify_ticket_reassigned = models.BooleanField(
+        default=False,
+        help_text="When a ticket is reassigned to another agent"
+    )
+    notify_ticket_group_assigned = models.BooleanField(
+        default=True,
+        help_text="When a ticket is assigned to a group (notifies all group members)"
+    )
+    notify_kb_article_published = models.BooleanField(
+        default=False,
+        help_text="When a knowledge base article is published"
+    )
+    notify_kb_feedback_received = models.BooleanField(
+        default=False,
+        help_text="When feedback is received on a knowledge base article"
+    )
+    notify_sla_response_warning = models.BooleanField(
+        default=False,
+        help_text="When a ticket is approaching first response SLA breach"
+    )
+    notify_sla_response_breached = models.BooleanField(
+        default=False,
+        help_text="When a ticket has breached first response SLA"
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -605,9 +631,137 @@ class NotificationSettings(models.Model):
         return settings
 
 
+class BoardColumn(models.Model):
+    """
+    Board column configuration for Kanban-style task boards.
+    Each tenant can customize their board columns.
+    """
+    
+    class BoardType(models.TextChoices):
+        TASK = 'task', 'Task Board'
+        TICKET = 'ticket', 'Ticket Board'
+    
+    class DefaultColors(models.TextChoices):
+        GRAY = 'bg-gray-500', 'Gray'
+        BLUE = 'bg-blue-500', 'Blue'
+        GREEN = 'bg-green-500', 'Green'
+        YELLOW = 'bg-yellow-500', 'Yellow'
+        ORANGE = 'bg-orange-500', 'Orange'
+        RED = 'bg-red-500', 'Red'
+        PURPLE = 'bg-purple-500', 'Purple'
+        PINK = 'bg-pink-500', 'Pink'
+    
+    # Identification
+    board_type = models.CharField(
+        max_length=20,
+        choices=BoardType.choices,
+        default=BoardType.TASK,
+        help_text="Type of board this column belongs to"
+    )
+    column_id = models.CharField(
+        max_length=50,
+        help_text="Internal identifier matching status value (e.g., 'todo', 'in_progress')"
+    )
+    
+    # Display settings
+    label = models.CharField(
+        max_length=100,
+        help_text="Display label for the column"
+    )
+    color = models.CharField(
+        max_length=50,
+        choices=DefaultColors.choices,
+        default=DefaultColors.GRAY,
+        help_text="Color class for the column indicator"
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Optional description shown in tooltips"
+    )
+    
+    # Configuration
+    position = models.PositiveIntegerField(
+        default=0,
+        help_text="Display order of the column"
+    )
+    is_visible = models.BooleanField(
+        default=True,
+        help_text="Whether this column is visible on the board"
+    )
+    wip_limit = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        help_text="Work-in-progress limit for this column (optional)"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Board Column"
+        verbose_name_plural = "Board Columns"
+        db_table = 'setting_board_columns'
+        ordering = ['board_type', 'position']
+        unique_together = ['board_type', 'column_id']
+    
+    def __str__(self):
+        return f"{self.get_board_type_display()} - {self.label}"
+    
+    @classmethod
+    def get_task_columns(cls):
+        """Get all task board columns in order"""
+        return cls.objects.filter(board_type=cls.BoardType.TASK, is_visible=True).order_by('position')
+    
+    @classmethod
+    def get_ticket_columns(cls):
+        """Get all ticket board columns in order"""
+        return cls.objects.filter(board_type=cls.BoardType.TICKET, is_visible=True).order_by('position')
+    
+    @classmethod
+    def seed_default_task_columns(cls):
+        """Create default task board columns if none exist"""
+        if cls.objects.filter(board_type=cls.BoardType.TASK).exists():
+            return 0
+        
+        default_columns = [
+            {'column_id': 'todo', 'label': 'To Do', 'color': 'bg-gray-500', 'position': 0, 'description': 'Tasks that haven\'t been started yet'},
+            {'column_id': 'in_progress', 'label': 'In Progress', 'color': 'bg-blue-500', 'position': 1, 'description': 'Tasks currently being worked on'},
+            {'column_id': 'review', 'label': 'In Review', 'color': 'bg-purple-500', 'position': 2, 'description': 'Tasks waiting for review'},
+            {'column_id': 'done', 'label': 'Done', 'color': 'bg-green-500', 'position': 3, 'description': 'Completed tasks'},
+        ]
+        
+        for col_data in default_columns:
+            cls.objects.create(board_type=cls.BoardType.TASK, **col_data)
+        
+        return len(default_columns)
+    
+    @classmethod
+    def seed_default_ticket_columns(cls):
+        """Create default ticket board columns if none exist"""
+        if cls.objects.filter(board_type=cls.BoardType.TICKET).exists():
+            return 0
+        
+        default_columns = [
+            {'column_id': 'new', 'label': 'New', 'color': 'bg-blue-500', 'position': 0, 'description': 'Newly created tickets'},
+            {'column_id': 'open', 'label': 'Open', 'color': 'bg-yellow-500', 'position': 1, 'description': 'Tickets being processed'},
+            {'column_id': 'in_progress', 'label': 'In Progress', 'color': 'bg-orange-500', 'position': 2, 'description': 'Actively worked on'},
+            {'column_id': 'pending', 'label': 'On Hold', 'color': 'bg-gray-500', 'position': 3, 'description': 'Waiting for customer response'},
+            {'column_id': 'resolved', 'label': 'Resolved', 'color': 'bg-green-500', 'position': 4, 'description': 'Issue has been resolved'},
+            {'column_id': 'closed', 'label': 'Closed', 'color': 'bg-gray-500', 'position': 5, 'description': 'Ticket is closed'},
+        ]
+        
+        for col_data in default_columns:
+            cls.objects.create(board_type=cls.BoardType.TICKET, **col_data)
+        
+        return len(default_columns)
+
+
 class Channel(models.Model):
     """
-    Communication channels available for inboxes.
+    Communication channels available for a tenant's inboxes.
+    Seeded on tenant creation and managed via administration settings.
     """
 
     CHANNEL_STATUS_CHOICES = [
@@ -618,10 +772,10 @@ class Channel(models.Model):
     channel_id = models.CharField(max_length=50, unique=True, help_text="Unique channel identifier (e.g., 'email', 'slack')")
     name = models.CharField(max_length=100, help_text="Display name")
     description = models.TextField(help_text="Channel description")
-    icon = models.CharField(max_length=50, help_text="Icon name")
+    icon = models.CharField(max_length=50, help_text="Ant Design icon name")
     icon_bg = models.CharField(max_length=20, default='#f3f4f6', help_text="Icon background color")
     icon_color = models.CharField(max_length=20, default='#6b7280', help_text="Icon color")
-    is_activated = models.BooleanField(default=True, help_text="Whether the channel is enabled")
+    is_activated = models.BooleanField(default=True, help_text="Whether the channel is enabled for this tenant")
     status = models.CharField(max_length=20, choices=CHANNEL_STATUS_CHOICES, default='active', help_text="Channel availability status")
     is_connected = models.BooleanField(default=False, help_text="Whether the channel has been configured/connected")
     inbox_count = models.PositiveIntegerField(default=0, help_text="Number of inboxes using this channel")
@@ -641,7 +795,7 @@ class Channel(models.Model):
 
     @classmethod
     def seed_default_channels(cls):
-        """Sync default channels. Creates new, updates existing, deletes removed."""
+        """Sync default channels. Creates new, updates existing, deletes removed. Returns (created, updated, deleted) counts."""
         from shared.utilities.enums.channels import ChannelsRegistry
 
         created_count = 0
@@ -651,6 +805,7 @@ class Channel(models.Model):
         default_channels = ChannelsRegistry.get_all_channels()
         valid_ids = ChannelsRegistry.get_all_channel_ids()
 
+        # Delete channels no longer in the registry
         orphaned = cls.objects.exclude(channel_id__in=valid_ids)
         deleted_count = orphaned.count()
         orphaned.delete()
@@ -663,6 +818,7 @@ class Channel(models.Model):
             if created:
                 created_count += 1
             else:
+                # Update existing channel fields (except is_activated and is_connected which are tenant state)
                 changed = False
                 for field in ('name', 'description', 'icon', 'icon_bg', 'icon_color', 'status', 'order'):
                     if getattr(channel, field) != ch_data[field]:

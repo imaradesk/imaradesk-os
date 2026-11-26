@@ -41,53 +41,38 @@ app.conf.beat_schedule = {
         'schedule': 60.0,
         'options': {'queue': 'email_processing'}
     },
+    # SLA engine every minute: business hours, holidays (30 min), warnings + breaches (3 min)
+    'run-sla-engine': {
+        'task': 'modules.crons.tasks.run_sla_engine',
+        'schedule': 60.0,
+        'options': {'queue': 'sla_notifications', 'expires': 60}
+    },
+    # Task reminders daily at 8 AM: due soon + overdue
+    'run-daily-task-reminders': {
+        'task': 'modules.crons.tasks.run_daily_task_reminders',
+        'schedule': crontab(hour=8, minute=0),
+        'options': {'queue': 'celery'}
+    },
+    # Auto-close resolved tickets - every 30 minutes
+    'auto-close-resolved-tickets': {
+        'task': 'modules.crons.tasks.auto_close_resolved_tickets',
+        'schedule': crontab(minute='*/30'),
+        'options': {'queue': 'celery'}
+    },
     # Send weekly performance reports - every Sunday at midnight
     'send-weekly-performance-reports': {
         'task': 'modules.crons.tasks.send_weekly_performance_reports',
         'schedule': crontab(hour=0, minute=0, day_of_week='sunday'),
         'options': {'queue': 'reports'}
     },
-    # # Check SLA breach warnings - every 5 minutes
-    # 'check-sla-breach-warnings': {
-    #     'task': 'modules.crons.tasks.check_sla_breach_warnings',
-    #     'schedule': crontab(minute='*/5'),  # Every 5 minutes
-    #     'options': {'queue': 'sla_notifications'}
-    # },
-    # # Handle SLA breaches - every 5 minutes
-    # 'handle-sla-breaches': {
-    #     'task': 'modules.crons.tasks.handle_sla_breaches',
-    #     'schedule': crontab(minute='*/5'),  # Every 5 minutes
-    #     'options': {'queue': 'sla_notifications'}
-    # },
-     # Check SLA breach warnings - every 2 seconds
-    'check-sla-breach-warnings': {
-        'task': 'modules.crons.tasks.check_sla_breach_warnings',
-        'schedule': 20.0,  # Every 2 seconds
-        'options': {'queue': 'sla_notifications'}
-    },
-
-    # Handle SLA breaches - every 2 seconds
-    'handle-sla-breaches': {
-        'task': 'modules.crons.tasks.handle_sla_breaches',
-        'schedule': 20.0,  # Every 2 seconds
-        'options': {'queue': 'sla_notifications'}
-    },
-    # Auto-close resolved tickets - every 30 minutes
-    'auto-close-resolved-tickets': {
-        'task': 'modules.crons.tasks.auto_close_resolved_tickets',
-        'schedule': crontab(minute='*/30'),  # Every 30 minutes
-        'options': {'queue': 'celery'}
-    },
 }
 
 # Task routing - separate queues for different task types
 app.conf.task_routes = {
     'modules.email_to_ticket.tasks.*': {'queue': 'email_processing'},
-    'modules.crons.tasks.process_*': {'queue': 'email_processing'},
     'modules.crons.tasks.send_weekly_*': {'queue': 'reports'},
-    'modules.crons.tasks.check_sla_*': {'queue': 'sla_notifications'},
-    'modules.crons.tasks.handle_sla_*': {'queue': 'sla_notifications'},
-    'modules.crons.tasks.close_single_ticket_task': {'queue': 'celery'},
+    'modules.crons.tasks.run_sla_engine': {'queue': 'sla_notifications'},
+    'modules.crons.tasks.send_sla_notification': {'queue': 'sla_notifications'},
     'modules.crons.tasks.auto_close_resolved_tickets': {'queue': 'celery'},
 }
 

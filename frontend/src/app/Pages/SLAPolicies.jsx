@@ -1,19 +1,36 @@
 import React, { useState, useEffect } from 'react'
 import { Head, Link } from '@inertiajs/react'
 import toast from 'react-hot-toast'
+import {
+  AlertTriangle, BellRing, Briefcase, CalendarDays, CalendarOff, CheckCircle2, Clock, Eye, Filter, Gauge, Layers,
+  PauseCircle, Pencil, Plus, Power, Search, ShieldCheck, Siren, Timer, Trash2, X, Zap,
+} from 'lucide-react'
+import api from '../../utils/axios'
 import AppShell from '../components/AppShell'
-import SettingsSidenav from '../components/SettingsSidenav'
+import { SettingsHeading, Toggle, btn } from '../components/settings/SettingsPage'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Modal from '../components/Modal'
 import Select from '../components/SearchableSelect'
-import { THEME } from '../constants/theme'
+import {
+  EmptyState, PRIORITIES, PRIORITY_ORDER, PriorityPill, SlaCard, SlaHero, StatTile, fieldClass, shortMinutes,
+} from '../components/sla/SLAUI'
+import { PriorityIcon } from '../components/tasks/ui'
+import Tabs from '../components/Tabs'
+
+const DISABLED_FEATURES = [
+  { icon: ShieldCheck, title: 'SLA policies', body: 'Response and resolution targets for each priority.' },
+  { icon: Briefcase, title: 'Business hours', body: 'Count only working time for accurate targets.' },
+  { icon: CalendarDays, title: 'Holidays', body: 'Pause timers automatically on days off.' },
+]
 
 export default function SLAPolicies({ policies = [] }) {
-  const [sidenavOpen, setSidenavOpen] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingPolicy, setEditingPolicy] = useState(null)
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, action: null, policyId: null })
   const [isLoadingSettings, setIsLoadingSettings] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [assignmentGroups, setAssignmentGroups] = useState([])
   const [slaSettings, setSlaSettings] = useState({
     enabled: false,
     auto_pause_resolved: true,
@@ -28,23 +45,121 @@ export default function SLAPolicies({ policies = [] }) {
     first_response_time: 60,
     resolution_time: 240,
     status: 'active',
-    apply_to_new_tickets: false,
+    apply_business_hours: false,
+    apply_holidays: false,
     send_escalation_emails: false,
     auto_assign_on_breach: false,
     pause_on_pending: false,
     notify_before_breach: 30,
+    use_custom_rules: false,
+    custom_rules: [],
+    rules_logic: 'AND',
   })
 
-  // Fetch SLA settings on mount
+  // Available fields for rule conditions
+  const ruleFields = [
+    { id: 'priority', name: 'Priority', type: 'select', options: [
+      { id: 'urgent', name: 'Urgent' },
+      { id: 'high', name: 'High' },
+      { id: 'medium', name: 'Medium' },
+      { id: 'low', name: 'Low' },
+    ]},
+    { id: 'tag', name: 'Tag', type: 'text' },
+    { id: 'assignment_group', name: 'Assignment Group', type: 'api', options: assignmentGroups },
+    { id: 'type', name: 'Ticket Type', type: 'select', options: [
+      { id: 'incident', name: 'Incident' },
+      { id: 'question', name: 'Question' },
+      { id: 'problem', name: 'Problem' },
+    ]},
+    { id: 'channel', name: 'Channel', type: 'select', options: [
+      { id: 'email', name: 'Email' },
+      { id: 'portal', name: 'Portal' },
+      { id: 'chat', name: 'Chat' },
+      { id: 'manual', name: 'Manual' },
+    ]},
+    { id: 'requester_type', name: 'Requester Type', type: 'select', options: [
+      { id: 'customer', name: 'Customer' },
+      { id: 'employee', name: 'Employee' },
+    ]},
+  ]
+
+  const ruleOperators = [
+    { id: 'equals', name: 'Equals' },
+    { id: 'not_equals', name: 'Not equals' },
+    { id: 'contains', name: 'Contains' },
+    { id: 'not_contains', name: 'Does not contain' },
+    { id: 'starts_with', name: 'Starts with' },
+    { id: 'ends_with', name: 'Ends with' },
+    { id: 'is_empty', name: 'Is empty' },
+    { id: 'is_not_empty', name: 'Is not empty' },
+  ]
+
+  const operatorSymbols = {
+    equals: '=',
+    not_equals: '≠',
+    contains: '⊃',
+    not_contains: '⊅',
+    starts_with: '^',
+    ends_with: '$',
+    is_empty: '∅',
+    is_not_empty: '≠∅',
+  }
+
+  const rulesLogicOptions = [
+    { id: 'AND', name: 'ALL conditions are met (AND)' },
+    { id: 'OR', name: 'ANY condition is met (OR)' },
+  ]
+
+  const addRule = () => {
+    const newRule = {
+      id: Date.now(),
+      field: 'priority',
+      operator: 'equals',
+      value: '',
+    }
+    setFormData({
+      ...formData,
+      custom_rules: [...formData.custom_rules, newRule],
+    })
+  }
+
+  const updateRule = (ruleId, updates) => {
+    setFormData({
+      ...formData,
+      custom_rules: formData.custom_rules.map(rule =>
+        rule.id === ruleId ? { ...rule, ...updates } : rule
+      ),
+    })
+  }
+
+  const removeRule = (ruleId) => {
+    setFormData({
+      ...formData,
+      custom_rules: formData.custom_rules.filter(rule => rule.id !== ruleId),
+    })
+  }
+
+  const toggleCustomRules = (enabled) => {
+    setFormData({
+      ...formData,
+      use_custom_rules: enabled,
+      custom_rules: enabled && formData.custom_rules.length === 0 
+        ? [{ id: Date.now(), field: 'priority', operator: 'equals', value: '' }] 
+        : formData.custom_rules,
+    })
+  }
+
+  // Fetch SLA settings and assignment groups on mount
   useEffect(() => {
     fetchSLASettings()
+    fetchAssignmentGroups()
   }, [])
 
   const fetchSLASettings = async () => {
     try {
       setIsLoadingSettings(true)
-      const response = await fetch('/sla/api/settings/')
-      const data = await response.json()
+      const response = await api.get('/sla/api/settings/')
+      const data = response.data
       if (data.success) {
         setSlaSettings(data.settings)
       }
@@ -52,6 +167,17 @@ export default function SLAPolicies({ policies = [] }) {
       console.error('Error fetching SLA settings:', error)
     } finally {
       setIsLoadingSettings(false)
+    }
+  }
+
+  const fetchAssignmentGroups = async () => {
+    try {
+      const response = await api.get('/api/onboarding/groups/')
+      if (response.data.success) {
+        setAssignmentGroups(response.data.groups || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch assignment groups:', error)
     }
   }
 
@@ -64,25 +190,17 @@ export default function SLAPolicies({ policies = [] }) {
   }
 
   const toggleSLA = async () => {
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-    
     toast.promise(
-      fetch('/sla/api/settings/update/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify({ enabled: !slaSettings.enabled }),
-      }).then(async (response) => {
-        const data = await response.json()
-        if (data.success) {
-          setSlaSettings(data.settings)
-          return data.settings.enabled ? 'SLA tracking activated!' : 'SLA tracking disabled'
-        } else {
-          throw new Error(data.message || 'Failed to update SLA settings')
-        }
-      }),
+      api.post('/sla/api/settings/update/', { enabled: !slaSettings.enabled })
+        .then((response) => {
+          const data = response.data
+          if (data.success) {
+            setSlaSettings(data.settings)
+            return data.settings.enabled ? 'SLA tracking activated!' : 'SLA tracking disabled'
+          } else {
+            throw new Error(data.message || 'Failed to update SLA settings')
+          }
+        }),
       {
         loading: slaSettings.enabled ? 'Deactivating SLA...' : 'Activating SLA...',
         success: (message) => message,
@@ -92,25 +210,17 @@ export default function SLAPolicies({ policies = [] }) {
   }
 
   const updateSLASetting = async (setting, value) => {
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
-    
     toast.promise(
-      fetch('/sla/api/settings/update/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify({ [setting]: value }),
-      }).then(async (response) => {
-        const data = await response.json()
-        if (data.success) {
-          setSlaSettings(data.settings)
-          return 'Setting updated successfully!'
-        } else {
-          throw new Error(data.message || 'Unknown error')
-        }
-      }),
+      api.post('/sla/api/settings/update/', { [setting]: value })
+        .then((response) => {
+          const data = response.data
+          if (data.success) {
+            setSlaSettings(data.settings)
+            return 'Setting updated successfully!'
+          } else {
+            throw new Error(data.message || 'Unknown error')
+          }
+        }),
       {
         loading: 'Updating setting...',
         success: (message) => message,
@@ -126,26 +236,19 @@ export default function SLAPolicies({ policies = [] }) {
       ? `/sla/api/policies/${editingPolicy.id}/update/`
       : '/sla/api/policies/create/'
     
-    const method = editingPolicy ? 'PUT' : 'POST'
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
+    const method = editingPolicy ? 'put' : 'post'
     
     toast.promise(
-      fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        body: JSON.stringify(formData),
-      }).then(async (response) => {
-        const data = await response.json()
-        if (data.success) {
-          setTimeout(() => window.location.reload(), 1000)
-          return editingPolicy ? 'Policy updated successfully!' : 'Policy created successfully!'
-        } else {
-          throw new Error(data.message || 'Failed to save policy')
-        }
-      }),
+      api[method](url, formData)
+        .then((response) => {
+          const data = response.data
+          if (data.success) {
+            setTimeout(() => window.location.reload(), 1000)
+            return editingPolicy ? 'Policy updated successfully!' : 'Policy created successfully!'
+          } else {
+            throw new Error(data.message || 'Failed to save policy')
+          }
+        }),
       {
         loading: editingPolicy ? 'Updating policy...' : 'Creating policy...',
         success: (message) => message,
@@ -163,11 +266,15 @@ export default function SLAPolicies({ policies = [] }) {
       first_response_time: policy.first_response_minutes,
       resolution_time: policy.resolution_time_minutes,
       status: policy.status,
-      apply_to_new_tickets: policy.apply_to_new_tickets ?? false,
+      apply_business_hours: policy.apply_business_hours ?? false,
+      apply_holidays: policy.apply_holidays ?? false,
       send_escalation_emails: policy.send_escalation_emails ?? false,
       auto_assign_on_breach: policy.auto_assign_on_breach ?? false,
       pause_on_pending: policy.pause_on_pending ?? false,
       notify_before_breach: policy.notify_before_breach,
+      use_custom_rules: policy.use_custom_rules ?? false,
+      custom_rules: policy.custom_rules ?? [],
+      rules_logic: policy.rules_logic ?? 'AND',
     })
     setShowModal(true)
   }
@@ -178,23 +285,18 @@ export default function SLAPolicies({ policies = [] }) {
 
   const handleDelete = async () => {
     const policyId = confirmDialog.policyId
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || ''
     
     toast.promise(
-      fetch(`/sla/api/policies/${policyId}/delete/`, {
-        method: 'DELETE',
-        headers: {
-          'X-CSRFToken': csrfToken,
-        },
-      }).then(async (response) => {
-        const data = await response.json()
-        if (data.success) {
-          setTimeout(() => window.location.reload(), 1000)
-          return 'Policy deleted successfully!'
-        } else {
-          throw new Error(data.message || 'Failed to delete policy')
-        }
-      }),
+      api.delete(`/sla/api/policies/${policyId}/delete/`)
+        .then((response) => {
+          const data = response.data
+          if (data.success) {
+            setTimeout(() => window.location.reload(), 1000)
+            return 'Policy deleted successfully!'
+          } else {
+            throw new Error(data.message || 'Failed to delete policy')
+          }
+        }),
       {
         loading: 'Deleting policy...',
         success: (message) => message,
@@ -212,305 +314,282 @@ export default function SLAPolicies({ policies = [] }) {
       first_response_time: 60,
       resolution_time: 240,
       status: 'active',
-      apply_to_new_tickets: false,
+      apply_business_hours: false,
+      apply_holidays: false,
       send_escalation_emails: false,
       auto_assign_on_breach: false,
       pause_on_pending: false,
       notify_before_breach: 30,
+      use_custom_rules: false,
+      custom_rules: [],
+      rules_logic: 'AND',
     })
     setShowModal(true)
   }
 
+
+  const query = searchQuery.trim().toLowerCase()
+  const priorityCounts = PRIORITY_ORDER.reduce((acc, id) => ({ ...acc, [id]: policies.filter((p) => String(p.priority).toLowerCase() === id).length }), {})
+  const activeCount = policies.filter((p) => p.status === 'active').length
+  const visiblePolicies = policies.filter((p) =>
+    (priorityFilter === 'all' || String(p.priority).toLowerCase() === priorityFilter) &&
+    (!query || p.name?.toLowerCase().includes(query) || (p.description || '').toLowerCase().includes(query))
+  )
+  const filterOptions = [
+    { id: 'all', label: 'All', icon: Layers, count: policies.length },
+    ...PRIORITY_ORDER.map((id) => ({ id, label: PRIORITIES[id].label, icon: PRIORITIES[id].icon, count: priorityCounts[id] })),
+  ]
+  const ruleRowClass = 'flex items-center gap-2 p-3 bg-white rounded-xl border border-gray-200'
+
   return (
     <>
       <Head title="SLA Policies - Settings" />
-      
-      <ConfirmDialog
-        isOpen={confirmDialog.isOpen}
-        onClose={() => setConfirmDialog({ isOpen: false, action: null, policyId: null })}
-        onConfirm={() => {
-          if (confirmDialog.action === 'delete') {
-            handleDelete()
-          } else if (confirmDialog.action === 'activate' || confirmDialog.action === 'deactivate') {
-            toggleSLA()
-          }
-        }}
-        title={
-          confirmDialog.action === 'delete' 
-            ? 'Delete SLA Policy'
-            : confirmDialog.action === 'activate'
-            ? 'Activate SLA Tracking'
-            : 'Deactivate SLA Tracking'
-        }
-        message={
-          confirmDialog.action === 'delete'
-            ? 'Are you sure you want to delete this SLA policy? This action cannot be undone.'
-            : confirmDialog.action === 'activate'
-            ? 'Activate SLA tracking to start monitoring ticket response and resolution times against your defined policies?'
-            : 'Deactivate SLA tracking? New tickets will not be assigned SLA policies. Note: Existing tickets with active SLA policies will continue to be tracked until they are resolved or closed.'
-        }
-        confirmText={
-          confirmDialog.action === 'delete' ? 'Delete' :
-          confirmDialog.action === 'activate' ? 'Activate' : 'Deactivate'
-        }
-        cancelText="Cancel"
-        confirmStyle={confirmDialog.action === 'delete' || confirmDialog.action === 'deactivate' ? 'danger' : 'primary'}
-      />
-      
-      <AppShell active="settings">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          {sidenavOpen && <SettingsSidenav activeSection="sla-policies" slaEnabled={slaSettings.enabled} />}
-          
-          <main className="flex-1 bg-gray-50">
-            <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {!sidenavOpen && (
-                  <button
-                    className="p-2 rounded-md hover:bg-gray-100"
-                    title="Show Settings Menu"
-                    onClick={() => setSidenavOpen(true)}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500">
-                      <path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/>
-                    </svg>
-                  </button>
+      <AppShell active="settings" fixedHeight>
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          <main className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
+            <div className="max-w-6xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 flex flex-wrap items-center gap-3">
+              <SettingsHeading section="sla-policies">SLA Policies</SettingsHeading>
+              <div className="ml-auto flex items-center gap-2 w-full sm:w-auto">
+                {slaSettings.enabled && policies.length > 0 && (
+                  <div className="relative flex-1 sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setSearchQuery('') }}
+                      placeholder="Search policies"
+                      aria-label="Search policies"
+                      className="w-full h-9 pl-9 pr-8 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26] transition-shadow"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        aria-label="Clear search"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 )}
-                <h1 className="text-xl font-semibold text-gray-800">SLA Policies</h1>
+                {slaSettings.enabled && (
+                  <Link href="/administration/sla/policies/add/" className={`${btn.primary} group flex-shrink-0`}>
+                    <Plus className="w-4 h-4 transition-transform duration-300 group-hover:rotate-90" />
+                    New policy
+                  </Link>
+                )}
               </div>
-              {slaSettings.enabled && (
-                <Link
-                  href="/settings/sla/policies/add/"
-                  className={`${THEME.button.primary} px-4 py-2 rounded-lg flex items-center gap-2`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  New SLA Policy
-                </Link>
-              )}
             </div>
 
-            <div className="p-6">
-              {/* SLA Information Alert */}
-              <div className="mb-6 bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg">
-                <div className="flex items-start">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500 mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <h3 className="text-sm font-semibold text-blue-900 mb-1">What is SLA?</h3>
-                    <p className="text-sm text-blue-800 leading-relaxed">
-                      <strong>Service Level Agreement (SLA)</strong> is a commitment between a service provider and customer that defines the expected level of service. 
-                      In ticketing systems, SLAs set target response and resolution times based on ticket priority. This helps teams:
-                    </p>
-                    <ul className="mt-2 ml-4 text-sm text-blue-800 space-y-1 list-disc">
-                      <li><strong>Prioritize work</strong> - Critical issues get faster attention</li>
-                      <li><strong>Meet commitments</strong> - Track performance against targets</li>
-                      <li><strong>Improve service</strong> - Identify bottlenecks and optimize workflows</li>
-                      <li><strong>Build trust</strong> - Set clear expectations with customers</li>
-                    </ul>
-                    <p className="text-sm text-blue-800 mt-2">
-                      <strong>Note:</strong> SLA tracking is disabled by default. Configure your policies below, then activate SLA to start monitoring ticket performance.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* SLA Activation Banner */}
+            <div className="px-4 sm:px-6 lg:px-8 py-6 max-w-6xl mx-auto w-full space-y-6">
+              {/* Intro + tracking switch */}
               {isLoadingSettings ? (
-                // Skeleton loader for activation banner
-                <div className="p-6 rounded-lg border-2 border-gray-200 bg-gray-50 mb-6 animate-pulse">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-3 h-3 rounded-full bg-gray-300"></div>
-                        <div className="h-6 w-48 bg-gray-300 rounded"></div>
-                      </div>
-                      <div className="h-4 w-3/4 bg-gray-300 rounded"></div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 animate-pulse">
+                  <div className="flex items-center gap-4">
+                    <div className="w-11 h-11 rounded-xl bg-gray-100" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 w-48 rounded bg-gray-100" />
+                      <div className="h-3 w-3/4 rounded bg-gray-100" />
                     </div>
-                    <div className="h-10 w-20 bg-gray-300 rounded-full"></div>
+                    <div className="w-11 h-6 rounded-full bg-gray-100" />
                   </div>
                 </div>
               ) : (
-                <div className={`p-6 rounded-lg border-2 mb-6 ${
-                  slaSettings.enabled 
-                    ? 'bg-green-50 border-green-200' 
-                    : 'bg-gray-50 border-gray-300'
-                }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className={`w-3 h-3 rounded-full ${
-                        slaSettings.enabled ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                      }`}></div>
-                      <h3 className="text-lg font-semibold text-gray-900">
-                        SLA Tracking is {slaSettings.enabled ? 'Active' : 'Disabled'}
-                      </h3>
+                <SlaHero
+                  icon={Gauge}
+                  title="Service level agreements"
+                  description="Set response and resolution targets per priority so urgent work gets attention first, and track how your team performs against them."
+                  aside={
+                    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 pl-3 pr-2 py-2">
+                      <span className="relative flex w-2.5 h-2.5">
+                        {slaSettings.enabled && <span className="absolute inset-0 rounded-full bg-emerald-500 opacity-60 animate-ping" />}
+                        <span className={`relative w-2.5 h-2.5 rounded-full ${slaSettings.enabled ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900">Tracking {slaSettings.enabled ? 'active' : 'off'}</p>
+                        <p className="text-[11px] text-gray-500">{slaSettings.enabled ? 'Tickets are monitored' : 'Policies are not applied'}</p>
+                      </div>
+                      <Toggle checked={slaSettings.enabled} onChange={toggleSLAConfirm} label={slaSettings.enabled ? 'Deactivate SLA tracking' : 'Activate SLA tracking'} />
                     </div>
-                    <p className="text-sm text-gray-600">
-                      {slaSettings.enabled 
-                        ? 'Service Level Agreement tracking is currently active. Tickets will be monitored against defined SLA policies.'
-                        : 'Enable SLA tracking to monitor ticket response and resolution times against defined policies.'
-                      }
-                    </p>
-                  </div>
-                  
-                  {/* Toggle Switch */}
-                  <button
-                    onClick={toggleSLAConfirm}
-                    className={`relative inline-flex h-10 w-20 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                      slaSettings.enabled
-                        ? 'bg-green-600 focus:ring-green-500'
-                        : 'bg-gray-300 focus:ring-gray-400'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-8 w-8 transform rounded-full bg-white shadow-lg transition-transform ${
-                        slaSettings.enabled ? 'translate-x-11' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Additional Settings when SLA is enabled */}
-                
-              </div>
-              )}
-
-              {/* Policies Section - Only show when SLA is enabled */}
-              {isLoadingSettings ? (
-                // Skeleton loader for policies section
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden p-6 animate-pulse">
-                  <div className="h-4 w-2/3 bg-gray-300 rounded mb-4"></div>
-                  <div className="space-y-4">
-                    {[1, 2].map((i) => (
-                      <div key={i} className="p-4 border border-gray-200 rounded-lg">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <div className="h-5 w-32 bg-gray-300 rounded"></div>
-                              <div className="h-6 w-16 bg-gray-300 rounded-full"></div>
-                              <div className="h-6 w-16 bg-gray-300 rounded-full"></div>
-                            </div>
-                            <div className="h-4 w-3/4 bg-gray-300 rounded"></div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="w-9 h-9 bg-gray-300 rounded"></div>
-                            <div className="w-9 h-9 bg-gray-300 rounded"></div>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-200">
-                          <div>
-                            <div className="h-3 w-24 bg-gray-300 rounded mb-2"></div>
-                            <div className="h-5 w-20 bg-gray-300 rounded"></div>
-                          </div>
-                          <div>
-                            <div className="h-3 w-24 bg-gray-300 rounded mb-2"></div>
-                            <div className="h-5 w-20 bg-gray-300 rounded"></div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : slaSettings.enabled ? (
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="p-6">
-                    <p className="text-sm text-gray-600 mb-4">Define service level agreements for different ticket priorities</p>
-                    
-                    {policies.length === 0 ? (
-                      <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">No SLA Policies Yet</h3>
-                        <p className="text-gray-600 mb-4">Create your first SLA policy to start tracking service levels</p>
-                        <Link
-                          href="/settings/sla/policies/add/"
-                          className={`inline-block ${THEME.button.primary} px-4 py-2 rounded-lg`}
-                        >
-                          Create First Policy
-                        </Link>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">{policies.map((policy) => (
-                      <div key={policy.id} className="p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
-                        <div className="flex items-start justify-between mb-3">
-                          <div>
-                            <div className="flex items-center gap-3 mb-1">
-                              <h3 className="font-semibold text-gray-900">{policy.name}</h3>
-                              <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                                policy.priority === 'critical' ? 'bg-red-100 text-red-700' :
-                                policy.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-                                policy.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                'bg-blue-100 text-blue-700'
-                              }`}>
-                                {policy.priority}
-                              </span>
-                              <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">
-                                {policy.status}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-600">{policy.description}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Link
-                              href={`/settings/sla/policies/${policy.id}/edit/`}
-                              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                              </svg>
-                            </Link>
-                            <button 
-                              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
-                              onClick={() => handleDeleteConfirm(policy.id)}
-                            >
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4 pt-3 border-t border-gray-200">
-                          <div>
-                            <div className="text-xs text-gray-500 mb-1">First Response Time</div>
-                            <div className="font-semibold text-gray-900">{policy.first_response}</div>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-500 mb-1">Resolution Time</div>
-                            <div className="font-semibold text-gray-900">{policy.resolution_time}</div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                  }
+                >
+                  {slaSettings.enabled && policies.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <StatTile icon={ShieldCheck} label="Active" value={activeCount} tone="text-emerald-600" hint={`of ${policies.length} policies`} />
+                      {PRIORITY_ORDER.map((id) => (
+                        <StatTile key={id} icon={PRIORITIES[id].icon} label={PRIORITIES[id].label} value={priorityCounts[id]} tone={PRIORITIES[id].tile.split(' ')[1]} />
+                      ))}
                     </div>
                   )}
-                </div>
-              </div>
-              ) : (
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden p-8">
-                  <div className="text-center max-w-2xl mx-auto">
-                    <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gray-100 flex items-center justify-center">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
+                </SlaHero>
+              )}
+
+              {/* Policies */}
+              {isLoadingSettings ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="rounded-2xl border border-gray-200 bg-white p-5 animate-pulse">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gray-100" />
+                        <div className="flex-1 space-y-2">
+                          <div className="h-4 w-32 rounded bg-gray-100" />
+                          <div className="h-3 w-20 rounded bg-gray-100" />
+                        </div>
+                      </div>
+                      <div className="mt-4 h-3 w-3/4 rounded bg-gray-100" />
+                      <div className="mt-4 flex gap-2">
+                        <div className="h-8 w-28 rounded-lg bg-gray-100" />
+                        <div className="h-8 w-28 rounded-lg bg-gray-100" />
+                      </div>
                     </div>
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">SLA Tracking is Disabled</h3>
-                    <p className="text-gray-600 mb-6">
-                      Enable SLA tracking above to define response and resolution time targets for different ticket priorities.
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      Once enabled, you'll be able to create SLA policies to ensure accurate ticket response time tracking.
-                    </p>
-                  </div>
+                  ))}
                 </div>
+              ) : slaSettings.enabled ? (
+                policies.length === 0 ? (
+                  <EmptyState
+                    icon={Timer}
+                    title="No SLA policies yet"
+                    description="Create your first policy to start tracking response and resolution times."
+                    action={
+                      <Link href="/administration/sla/policies/add/" className={btn.primary}>
+                        <Plus className="w-4 h-4" /> Create first policy
+                      </Link>
+                    }
+                  />
+                ) : (
+                  <div className="space-y-4">
+                    <Tabs tabs={filterOptions} active={priorityFilter} onChange={setPriorityFilter} label="Filter by priority" />
+
+                    {visiblePolicies.length === 0 ? (
+                      <EmptyState
+                        icon={Search}
+                        title="No policies match"
+                        description={query ? `Nothing matches “${searchQuery}”.` : 'No policies with this priority yet.'}
+                        action={
+                          <button type="button" onClick={() => { setSearchQuery(''); setPriorityFilter('all') }} className={btn.secondary}>
+                            Clear filters
+                          </button>
+                        }
+                      />
+                    ) : (
+                      <div key={priorityFilter} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {visiblePolicies.map((policy, index) => {
+                          const active = policy.status === 'active'
+                          return (
+                            <article
+                              key={policy.id}
+                              style={{ animationDelay: `${Math.min(index, 8) * 50}ms` }}
+                              className="group relative flex flex-col rounded-2xl border border-gray-200 bg-white p-5 animate-portalRise portal-lift hover:shadow-card-hover hover:border-[#0B3D26]/30"
+                            >
+                              <div className="flex items-start gap-3">
+                                <PriorityIcon priority={policy.priority} />
+                                <div className="flex-1 min-w-0">
+                                  <Link
+                                    href={`/administration/sla/policies/${policy.id}/edit/`}
+                                    className="block font-semibold text-gray-900 truncate group-hover:text-[#0B3D26] transition-colors"
+                                  >
+                                    {policy.name}
+                                  </Link>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <PriorityPill priority={policy.priority} />
+                                    <span className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-full border text-[11px] font-medium capitalize ${
+                                      active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-100 text-gray-500'
+                                    }`}>
+                                      <span className="relative flex w-1.5 h-1.5">
+                                        {active && <span className="absolute inset-0 rounded-full bg-emerald-500 opacity-60 animate-ping" />}
+                                        <span className={`relative w-1.5 h-1.5 rounded-full ${active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                                      </span>
+                                      {policy.status}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                                  <Link
+                                    href={`/administration/sla/policies/${policy.id}/edit/`}
+                                    title="Edit policy"
+                                    aria-label={`Edit ${policy.name}`}
+                                    className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    title="Delete policy"
+                                    aria-label={`Delete ${policy.name}`}
+                                    onClick={() => handleDeleteConfirm(policy.id)}
+                                    className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {policy.description && (
+                                <p className="mt-3 text-sm text-gray-500 leading-relaxed line-clamp-2">{policy.description}</p>
+                              )}
+
+                              <div className="mt-auto pt-4 grid grid-cols-2 gap-2">
+                                <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                                  <p className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                                    <Timer className="w-3.5 h-3.5 text-sky-600" /> First response
+                                  </p>
+                                  <p className="mt-0.5 text-sm font-semibold text-gray-900 tabular-nums">
+                                    {policy.first_response_minutes ? shortMinutes(policy.first_response_minutes) : policy.first_response}
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+                                  <p className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Resolution
+                                  </p>
+                                  <p className="mt-0.5 text-sm font-semibold text-gray-900 tabular-nums">
+                                    {policy.resolution_time_minutes ? shortMinutes(policy.resolution_time_minutes) : policy.resolution_time}
+                                  </p>
+                                </div>
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              ) : (
+                <SlaCard delay={80}>
+                  <div className="text-center max-w-2xl mx-auto py-4">
+                    <span className="relative mx-auto mb-4 w-16 h-16 rounded-2xl bg-[#0B3D26]/10 text-[#0B3D26] inline-flex items-center justify-center">
+                      <span className="absolute inset-0 rounded-2xl bg-[#0B3D26]/10 animate-ping [animation-duration:2.5s]" />
+                      <Clock className="relative w-8 h-8 animate-[spin_8s_linear_infinite]" strokeWidth={1.5} />
+                    </span>
+                    <h3 className="text-lg font-semibold tracking-tight text-gray-900">SLA tracking is turned off</h3>
+                    <p className="mt-1 text-sm text-gray-500">Turn it on to start measuring your team against clear targets.</p>
+                    <button type="button" onClick={toggleSLAConfirm} className={`${btn.primary} group mt-5`}>
+                      <Power className="w-4 h-4" /> Enable SLA tracking
+                    </button>
+
+                    <ul className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-3 text-left">
+                      {DISABLED_FEATURES.map(({ icon: Icon, title, body }, i) => (
+                        <li
+                          key={title}
+                          style={{ animationDelay: `${160 + i * 70}ms` }}
+                          className="group rounded-xl border border-gray-200 bg-gray-50 p-4 animate-portalRise"
+                        >
+                          <span className="w-9 h-9 rounded-lg bg-white border border-gray-200 text-[#0B3D26] inline-flex items-center justify-center transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6">
+                            <Icon className="w-4 h-4" strokeWidth={1.75} />
+                          </span>
+                          <h4 className="mt-3 text-sm font-semibold text-gray-900">{title}</h4>
+                          <p className="mt-0.5 text-xs text-gray-500">{body}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </SlaCard>
               )}
             </div>
           </main>
         </div>
-        
+
         {/* Modal for creating/editing SLA policy - Only show when SLA is enabled */}
         {slaSettings.enabled && (
           <Modal
@@ -519,30 +598,30 @@ export default function SLAPolicies({ policies = [] }) {
             title={editingPolicy ? 'Edit SLA Policy' : 'New SLA Policy'}
             maxWidth="max-w-2xl"
           >
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleSubmit} className="p-6 space-y-5">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Policy Name <span className="text-red-500">*</span>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Policy name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                  className={fieldClass}
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="e.g., Critical Issues SLA"
+                  placeholder="e.g., Urgent Issues SLA"
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   Priority <span className="text-red-500">*</span>
                 </label>
                 <Select
                   value={formData.priority}
                   onChange={(value) => setFormData({ ...formData, priority: value })}
                   options={[
-                    { id: 'critical', name: 'Critical' },
+                    { id: 'urgent', name: 'Urgent' },
                     { id: 'high', name: 'High' },
                     { id: 'medium', name: 'Medium' },
                     { id: 'low', name: 'Low' }
@@ -552,54 +631,52 @@ export default function SLAPolicies({ policies = [] }) {
                   allowClear={false}
                 />
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Description
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Description</label>
                 <textarea
                   rows="3"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                  className={`${fieldClass} h-auto py-2`}
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Describe when this policy applies"
                 />
               </div>
-              
-              <div className="grid grid-cols-2 gap-4">
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    First Response Time (minutes) <span className="text-red-500">*</span>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                    <Timer className="w-4 h-4 text-sky-600" /> First response (min) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
                     required
                     min="1"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                    className={fieldClass}
                     value={formData.first_response_time}
                     onChange={(e) => setFormData({ ...formData, first_response_time: parseInt(e.target.value) })}
                   />
+                  <p className="mt-1 text-xs text-gray-400">{shortMinutes(formData.first_response_time)}</p>
                 </div>
-                
+
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Resolution Time (minutes) <span className="text-red-500">*</span>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Resolution (min) <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="number"
                     required
                     min="1"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                    className={fieldClass}
                     value={formData.resolution_time}
                     onChange={(e) => setFormData({ ...formData, resolution_time: parseInt(e.target.value) })}
                   />
+                  <p className="mt-1 text-xs text-gray-400">{shortMinutes(formData.resolution_time)}</p>
                 </div>
               </div>
-              
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Status
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Status</label>
                 <Select
                   value={formData.status}
                   onChange={(value) => setFormData({ ...formData, status: value })}
@@ -611,92 +688,339 @@ export default function SLAPolicies({ policies = [] }) {
                   allowClear={false}
                 />
               </div>
-              
-              <div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formData.apply_to_new_tickets}
-                    onChange={(e) => setFormData({ ...formData, apply_to_new_tickets: e.target.checked })}
-                    className="w-4 h-4 text-[#4a154b] border-gray-300 rounded focus:ring-[#4a154b]"
-                  />
-                  <span className="text-sm text-gray-700">Apply to new tickets</span>
-                </label>
-                <p className="text-xs text-gray-500 mt-1 ml-6">Automatically apply this policy to new tickets matching the priority</p>
+
+              <div className="rounded-xl border border-gray-200 divide-y divide-gray-100">
+                <CheckRow
+                  icon={Briefcase}
+                  checked={formData.apply_business_hours}
+                  onChange={(checked) => setFormData({ ...formData, apply_business_hours: checked })}
+                  label="Apply business hours"
+                  description="Only count time during configured business hours"
+                />
+                <CheckRow
+                  icon={CalendarOff}
+                  checked={formData.apply_holidays}
+                  onChange={(checked) => setFormData({ ...formData, apply_holidays: checked })}
+                  label="Apply holidays"
+                  description="Exclude holidays from SLA time calculation"
+                />
               </div>
-              
+
+              {/* Trigger Rules Section */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                <div className="flex items-start gap-3 mb-3">
+                  <span className="w-8 h-8 rounded-lg bg-[#0B3D26]/10 text-[#0B3D26] inline-flex items-center justify-center flex-shrink-0">
+                    <Filter className="w-4 h-4" strokeWidth={1.75} />
+                  </span>
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">Trigger rules</h4>
+                    <p className="text-xs text-gray-500">Define when this SLA policy should be applied to tickets</p>
+                  </div>
+                </div>
+
+                {/* Toggle between simple and advanced mode */}
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <div className="inline-flex p-1 rounded-lg bg-white border border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => toggleCustomRules(false)}
+                      className={`h-7 px-3 text-sm rounded-md transition-all ${
+                        !formData.use_custom_rules ? 'bg-[#0B3D26] text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Simple
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleCustomRules(true)}
+                      className={`h-7 px-3 text-sm rounded-md transition-all ${
+                        formData.use_custom_rules ? 'bg-[#0B3D26] text-white font-medium shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Advanced rules
+                    </button>
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    {formData.use_custom_rules
+                      ? 'Build custom conditions to match tickets'
+                      : 'Apply to tickets based on priority level'}
+                  </span>
+                </div>
+
+                {/* Simple Mode - Apply to new tickets by priority */}
+                {!formData.use_custom_rules && (
+                  <div className="rounded-xl bg-white border border-gray-200 animate-fadeIn">
+                    <div className="flex items-start gap-3 px-4 py-3">
+                      <Zap className="w-4 h-4 mt-0.5 text-gray-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">Applies by priority</p>
+                        <p className="text-xs text-gray-500">While active, applies to all tickets with <strong>{formData.priority}</strong> priority</p>
+                      </div>
+                    </div>
+                    {(() => {
+                      const existingPolicy = formData.status === 'active' && policies.find(p => (
+                        p.status === 'active' && !p.use_custom_rules &&
+                        (p.priority || '').toLowerCase() === (formData.priority || '').toLowerCase() &&
+                        p.id !== editingPolicy?.id
+                      ))
+                      return existingPolicy ? (
+                        <div className="mx-4 mb-3 flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-px text-amber-600" />
+                          <p className="text-xs text-amber-700">
+                            Policy "{existingPolicy.name}" is already active for this priority. Deactivate it first, or this policy can't be saved as active.
+                          </p>
+                        </div>
+                      ) : null
+                    })()}
+                  </div>
+                )}
+
+                {/* Advanced Mode - Custom Rules Builder */}
+                {formData.use_custom_rules && (
+                  <div className="space-y-3 animate-fadeIn">
+                    {/* Rules Logic Selector */}
+                    <div className={ruleRowClass}>
+                      <span className="text-sm text-gray-600">Match tickets where</span>
+                      <div className="w-56">
+                        <Select
+                          value={formData.rules_logic}
+                          onChange={(value) => setFormData({ ...formData, rules_logic: value })}
+                          options={rulesLogicOptions}
+                          placeholder="Select logic"
+                          allowClear={false}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Rules List */}
+                    <div className="space-y-2">
+                      {formData.custom_rules.map((rule, index) => {
+                        const selectedField = ruleFields.find(f => f.id === rule.field)
+                        const needsValue = !['is_empty', 'is_not_empty'].includes(rule.operator)
+
+                        return (
+                          <div key={rule.id} className="group animate-portalRise">
+                            {index > 0 && (
+                              <div className="flex items-center justify-center py-1">
+                                <span className="text-[10px] font-semibold tracking-wider text-[#0B3D26] bg-[#0B3D26]/10 px-2 py-0.5 rounded-full">
+                                  {formData.rules_logic}
+                                </span>
+                              </div>
+                            )}
+                            <div className={ruleRowClass}>
+                              {/* Field Selector */}
+                              <div className="min-w-[140px]">
+                                <Select
+                                  value={rule.field}
+                                  onChange={(value) => updateRule(rule.id, { field: value, value: '' })}
+                                  options={ruleFields}
+                                  placeholder="Select field"
+                                  allowClear={false}
+                                />
+                              </div>
+
+                              {/* Operator Selector */}
+                              <div className="min-w-[140px]">
+                                <Select
+                                  value={rule.operator}
+                                  onChange={(value) => updateRule(rule.id, { operator: value })}
+                                  options={ruleOperators}
+                                  placeholder="Select operator"
+                                  allowClear={false}
+                                />
+                              </div>
+
+                              {/* Value Input - Show based on field type and operator */}
+                              {needsValue && (
+                                (selectedField?.type === 'select' || selectedField?.type === 'api') ? (
+                                  <div className="flex-1 min-w-[120px]">
+                                    <Select
+                                      value={rule.value}
+                                      onChange={(value) => updateRule(rule.id, { value: value })}
+                                      options={selectedField.options}
+                                      placeholder="Select value..."
+                                      searchable={selectedField?.type === 'api'}
+                                      allowClear={true}
+                                    />
+                                  </div>
+                                ) : (
+                                  <input
+                                    type="text"
+                                    value={rule.value}
+                                    onChange={(e) => updateRule(rule.id, { value: e.target.value })}
+                                    placeholder={`Enter ${selectedField?.name.toLowerCase()}...`}
+                                    className={`${fieldClass} h-9 flex-1 min-w-[120px]`}
+                                  />
+                                )
+                              )}
+
+                              {/* Remove Rule Button */}
+                              <button
+                                type="button"
+                                onClick={() => removeRule(rule.id)}
+                                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-all sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100"
+                                title="Remove condition"
+                                aria-label="Remove condition"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* Add Rule Button */}
+                    <button
+                      type="button"
+                      onClick={addRule}
+                      className="group flex items-center gap-2 h-9 px-3 text-sm text-[#0B3D26] hover:bg-[#0B3D26]/5 border border-dashed border-[#0B3D26]/30 hover:border-[#0B3D26] rounded-xl transition-colors w-full justify-center"
+                    >
+                      <Plus className="w-4 h-4 transition-transform duration-300 group-hover:rotate-90" />
+                      Add condition
+                    </button>
+
+                    {/* Rule Preview */}
+                    {formData.custom_rules.length > 0 && formData.custom_rules.some(r => r.value || ['is_empty', 'is_not_empty'].includes(r.operator)) && (
+                      <div className="p-3 bg-white rounded-xl border border-gray-200 animate-fadeIn">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <Eye className="w-4 h-4 text-gray-400" />
+                          <span className="text-xs font-semibold text-gray-600">Rule preview</span>
+                        </div>
+                        <code className="block text-xs text-gray-700 bg-gray-50 p-2 rounded-lg border border-gray-200 font-mono">
+                          {formData.custom_rules.map((rule, i) => {
+                            const field = ruleFields.find(f => f.id === rule.field)?.name || rule.field
+                            const opSymbol = operatorSymbols[rule.operator] || '='
+                            const needsValue = !['is_empty', 'is_not_empty'].includes(rule.operator)
+                            const selectedField = ruleFields.find(f => f.id === rule.field)
+                            let displayValue = rule.value
+                            if (selectedField?.options && rule.value) {
+                              const option = selectedField.options.find(o => o.id === rule.value)
+                              if (option) displayValue = option.name
+                            }
+                            const value = needsValue ? `"${displayValue || '...'}"` : ''
+                            const prefix = i > 0 ? ` ${formData.rules_logic} ` : ''
+                            return `${prefix}${field} ${opSymbol} ${value}`
+                          }).join('')}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* TODO: Escalate on Breach - feature coming soon
               <div>
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={formData.send_escalation_emails}
                     onChange={(e) => setFormData({ ...formData, send_escalation_emails: e.target.checked })}
-                    className="w-4 h-4 text-[#4a154b] border-gray-300 rounded focus:ring-[#4a154b]"
+                    className="w-4 h-4 text-[#0B3D26] border-gray-300 rounded focus:ring-[#0B3D26]"
                   />
                   <span className="text-sm text-gray-700">Send escalation emails</span>
                 </label>
                 <p className="text-xs text-gray-500 mt-1 ml-6">Notify team members when SLA is at risk of breach</p>
               </div>
-              
-              <div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formData.auto_assign_on_breach}
-                    onChange={(e) => setFormData({ ...formData, auto_assign_on_breach: e.target.checked })}
-                    className="w-4 h-4 text-[#4a154b] border-gray-300 rounded focus:ring-[#4a154b]"
-                  />
-                  <span className="text-sm text-gray-700">Auto-assign on breach</span>
-                </label>
-                <p className="text-xs text-gray-500 mt-1 ml-6">Automatically assign ticket to an administrator when SLA is breached</p>
+              */}
+
+              <div className="rounded-xl border border-gray-200 divide-y divide-gray-100">
+                <CheckRow
+                  icon={Siren}
+                  checked={formData.auto_assign_on_breach}
+                  onChange={(checked) => setFormData({ ...formData, auto_assign_on_breach: checked })}
+                  label="Escalate to admin on breach"
+                  description="Send escalation email to an administrator when SLA is breached"
+                />
+                <CheckRow
+                  icon={PauseCircle}
+                  checked={formData.pause_on_pending}
+                  onChange={(checked) => setFormData({ ...formData, pause_on_pending: checked })}
+                  label="Pause on pending status"
+                  description="Pause SLA timer when ticket is pending customer response"
+                />
               </div>
-              
+
               <div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={formData.pause_on_pending}
-                    onChange={(e) => setFormData({ ...formData, pause_on_pending: e.target.checked })}
-                    className="w-4 h-4 text-[#4a154b] border-gray-300 rounded focus:ring-[#4a154b]"
-                  />
-                  <span className="text-sm text-gray-700">Pause on pending status</span>
-                </label>
-                <p className="text-xs text-gray-500 mt-1 ml-6">Pause SLA timer when ticket is pending customer response</p>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Notify before breach (minutes)
+                <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                  <BellRing className="w-4 h-4 text-amber-600" /> Notify before breach (minutes)
                 </label>
                 <input
                   type="number"
                   min="0"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[#4a154b] focus:border-transparent"
+                  className={fieldClass}
                   value={formData.notify_before_breach}
                   onChange={(e) => setFormData({ ...formData, notify_before_breach: parseInt(e.target.value) })}
                 />
                 <p className="text-xs text-gray-500 mt-1">Set to 0 to disable notifications</p>
               </div>
-              
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <button
-                  type="button"
-                  className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                  onClick={() => setShowModal(false)}
-                >
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
+                <button type="button" className={btn.secondary} onClick={() => setShowModal(false)}>
                   Cancel
                 </button>
-                <button
-                  type="submit"
-                  className={`${THEME.button.primary} px-4 py-2 rounded-lg`}
-                >
-                  {editingPolicy ? 'Update Policy' : 'Create Policy'}
+                <button type="submit" className={btn.primary}>
+                  <CheckCircle2 className="w-4 h-4" />
+                  {editingPolicy ? 'Update policy' : 'Create policy'}
                 </button>
               </div>
             </form>
           </Modal>
         )}
+
+        <ConfirmDialog
+          isOpen={confirmDialog.isOpen}
+          onClose={() => setConfirmDialog({ isOpen: false, action: null, policyId: null })}
+          onConfirm={() => {
+            if (confirmDialog.action === 'delete') {
+              handleDelete()
+            } else if (confirmDialog.action === 'activate' || confirmDialog.action === 'deactivate') {
+              toggleSLA()
+            }
+          }}
+          title={
+            confirmDialog.action === 'delete'
+              ? 'Delete SLA Policy'
+              : confirmDialog.action === 'activate'
+              ? 'Activate SLA Tracking'
+              : 'Deactivate SLA Tracking'
+          }
+          message={
+            confirmDialog.action === 'delete'
+              ? 'Are you sure you want to delete this SLA policy? This action cannot be undone.'
+              : confirmDialog.action === 'activate'
+              ? 'Activate SLA tracking to start monitoring ticket response and resolution times against your defined policies?'
+              : 'Deactivate SLA tracking? New tickets will not be assigned SLA policies. Note: Existing tickets with active SLA policies will continue to be tracked until they are resolved or closed.'
+          }
+          confirmText={
+            confirmDialog.action === 'delete' ? 'Delete' :
+            confirmDialog.action === 'activate' ? 'Activate' : 'Deactivate'
+          }
+          cancelText="Cancel"
+          confirmStyle={confirmDialog.action === 'delete' || confirmDialog.action === 'deactivate' ? 'danger' : 'primary'}
+        />
       </AppShell>
     </>
+  )
+}
+
+/** Checkbox row with icon, used for the policy options in the modal */
+function CheckRow({ icon: Icon, checked, onChange, label, description }) {
+  return (
+    <label className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors">
+      <span className={`w-8 h-8 flex-shrink-0 rounded-lg inline-flex items-center justify-center transition-colors ${checked ? 'bg-[#0B3D26]/10 text-[#0B3D26]' : 'bg-gray-100 text-gray-400'}`}>
+        <Icon className="w-4 h-4" strokeWidth={1.75} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium text-gray-900">{label}</span>
+        {description && <span className="block text-xs text-gray-500">{description}</span>}
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 w-4 h-4 text-[#0B3D26] border-gray-300 rounded focus:ring-[#0B3D26]"
+      />
+    </label>
   )
 }

@@ -71,6 +71,7 @@ class Customer(models.Model):
         verbose_name = "Customer"
         verbose_name_plural = "Customers"
         ordering = ['-created_at']
+        db_table = "custport_customer"
     
     def __str__(self):
         return self.name
@@ -130,6 +131,7 @@ class CustomerContact(models.Model):
         verbose_name = "Customer Contact"
         verbose_name_plural = "Customer Contacts"
         ordering = ['-is_primary', 'last_name', 'first_name']
+        db_table = "custport_contact"
     
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.customer.name})"
@@ -202,6 +204,7 @@ class CustomerTicket(models.Model):
         verbose_name = "Customer Ticket"
         verbose_name_plural = "Customer Tickets"
         ordering = ['-created_at']
+        db_table = "custport_ticket"
     
     def __str__(self):
         if self.is_guest_ticket:
@@ -248,6 +251,7 @@ class CustomerTicketComment(models.Model):
         verbose_name = "Customer Ticket Comment"
         verbose_name_plural = "Customer Ticket Comments"
         ordering = ['created_at']
+        db_table = "custport_ticket_comment"
     
     def __str__(self):
         return f"Comment on {self.ticket.ticket_number} by {self.author}"
@@ -298,6 +302,7 @@ class CustomerAsset(models.Model):
         verbose_name = "Customer Asset"
         verbose_name_plural = "Customer Assets"
         ordering = ['-created_at']
+        db_table = "custport_asset"
     
     def __str__(self):
         return f"{self.name} ({self.asset_tag})"
@@ -402,6 +407,7 @@ class CustomerPortalSettings(models.Model):
     class Meta:
         verbose_name = "Customer Portal Settings"
         verbose_name_plural = "Customer Portal Settings"
+        db_table = "custport_settings"
     
     def __str__(self):
         return "Customer Portal Settings"

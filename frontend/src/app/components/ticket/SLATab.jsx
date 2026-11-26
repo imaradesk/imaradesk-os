@@ -1,4 +1,9 @@
 import React, { useState, useEffect } from 'react'
+import {
+  AlertTriangle, CalendarClock, CheckCircle2, CircleCheckBig, Clock, Gauge, History, MessageSquareReply,
+  PauseCircle, RotateCcw, ShieldCheck, Target, Timer,
+} from 'lucide-react'
+import { PriorityPill, PriorityTile, shortMinutes } from '../sla/SLAUI'
 
 function useCountdown(targetDate, isPaused) {
   const [timeLeft, setTimeLeft] = useState(() => {
@@ -21,51 +26,123 @@ function useCountdown(targetDate, isPaused) {
 }
 
 function formatCountdown(totalSeconds) {
-  if (totalSeconds === null || totalSeconds === undefined) return null
-  const isOverdue = totalSeconds < 0
   const abs = Math.abs(totalSeconds)
   const days = Math.floor(abs / 86400)
   const hours = Math.floor((abs % 86400) / 3600)
   const minutes = Math.floor((abs % 3600) / 60)
   const seconds = abs % 60
 
-  let parts = []
+  const parts = []
   if (days > 0) parts.push(`${days}d`)
   if (hours > 0 || days > 0) parts.push(`${hours}h`)
   parts.push(`${minutes}m`)
   parts.push(`${String(seconds).padStart(2, '0')}s`)
-
-  return { text: parts.join(' '), isOverdue }
+  return parts.join(' ')
 }
 
-function CountdownDisplay({ targetDate, breached, isPaused, label }) {
-  const timeLeft = useCountdown(targetDate, isPaused)
-  const countdown = formatCountdown(timeLeft)
+const fmt = (iso) => (iso ? new Date(iso).toLocaleString() : null)
 
-  if (!targetDate) {
-    return <span className="text-gray-400 text-sm">Not set</span>
+const TONES = {
+  ok: { ring: 'border-gray-200', tile: 'bg-emerald-50 text-emerald-600', text: 'text-emerald-600', bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+  warn: { ring: 'border-amber-200', tile: 'bg-amber-50 text-amber-600', text: 'text-amber-600', bar: 'bg-amber-500', dot: 'bg-amber-500' },
+  bad: { ring: 'border-red-200', tile: 'bg-red-50 text-red-600', text: 'text-red-600', bar: 'bg-red-500', dot: 'bg-red-500' },
+  hold: { ring: 'border-amber-200', tile: 'bg-amber-50 text-amber-600', text: 'text-amber-600', bar: 'bg-amber-400', dot: 'bg-amber-500' },
+  done: { ring: 'border-gray-200', tile: 'bg-emerald-50 text-emerald-600', text: 'text-emerald-600', bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+}
+
+function TimerCard({ icon: Icon, label, targetMinutes, dueAt, breached, onHold, doneAt, doneLabel, startedAt }) {
+  const timeLeft = useCountdown(dueAt, onHold || !!doneAt)
+  const overdue = !doneAt && (breached || (timeLeft !== null && timeLeft < 0))
+
+  let tone = 'ok'
+  if (doneAt) tone = breached ? 'bad' : 'done'
+  else if (onHold) tone = 'hold'
+  else if (overdue) tone = 'bad'
+  else if (timeLeft !== null && timeLeft < 3600) tone = 'warn'
+  const t = TONES[tone]
+
+  // Share of the SLA window already used (0-100)
+  let progress = 0
+  if (dueAt && startedAt) {
+    const start = new Date(startedAt).getTime()
+    const end = new Date(dueAt).getTime()
+    const ref = doneAt ? new Date(doneAt).getTime() : Date.now()
+    progress = end > start ? Math.min(100, Math.max(0, ((ref - start) / (end - start)) * 100)) : 0
   }
+  if (overdue) progress = 100
 
-  if (isPaused) {
-    return (
-      <div className="flex items-center gap-2">
-        <svg className="w-4 h-4 text-yellow-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span className="text-yellow-600 font-semibold text-lg">Paused</span>
-      </div>
-    )
-  }
-
-  const isOverdue = breached || countdown?.isOverdue
+  let headline
+  if (!dueAt) headline = <span className="text-2xl font-semibold text-gray-300">Not set</span>
+  else if (doneAt) headline = <span className={`text-2xl font-semibold ${t.text}`}>{breached ? 'Missed' : 'Met'}</span>
+  else if (onHold) headline = <span className={`text-2xl font-semibold ${t.text}`}>Paused</span>
+  else headline = (
+    <span className={`text-2xl font-semibold tabular-nums tracking-tight ${t.text}`}>
+      {overdue ? '−' : ''}{formatCountdown(timeLeft ?? 0)}
+    </span>
+  )
 
   return (
-    <div className="flex items-center gap-2">
-      <div className={`w-2 h-2 rounded-full ${isOverdue ? 'bg-red-500' : timeLeft < 3600 ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
-      <span className={`font-mono text-xl font-bold tabular-nums ${isOverdue ? 'text-red-600' : timeLeft < 3600 ? 'text-yellow-600' : 'text-green-600'}`}>
-        {isOverdue ? '−' : ''}{countdown?.text}
+    <div className={`rounded-2xl border bg-white p-5 transition-shadow hover:shadow-sm ${t.ring}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`w-10 h-10 rounded-xl inline-flex items-center justify-center flex-shrink-0 ${t.tile}`}>
+            <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900">{label}</p>
+            <p className="text-xs text-gray-500">Target {shortMinutes(targetMinutes)}</p>
+          </div>
+        </div>
+        {breached ? (
+          <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full border border-red-200 bg-red-50 text-[11px] font-medium text-red-700">
+            <AlertTriangle className="w-3 h-3" strokeWidth={2} /> Breached
+          </span>
+        ) : doneAt ? (
+          <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full border border-emerald-200 bg-emerald-50 text-[11px] font-medium text-emerald-700">
+            <CheckCircle2 className="w-3 h-3" strokeWidth={2} /> {doneLabel}
+          </span>
+        ) : onHold ? (
+          <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full border border-amber-200 bg-amber-50 text-[11px] font-medium text-amber-700">
+            <PauseCircle className="w-3 h-3" strokeWidth={2} /> On hold
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-5 flex items-center gap-2">
+        {!doneAt && !onHold && dueAt && (
+          <span className={`w-2 h-2 rounded-full ${t.dot} ${tone === 'warn' ? 'animate-pulse' : ''}`} />
+        )}
+        {headline}
+      </div>
+
+      <div className="mt-4 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-700 ${t.bar}`} style={{ width: `${progress}%` }} />
+      </div>
+
+      <div className="mt-4 space-y-1.5 text-xs">
+        <div className="flex items-center gap-2 text-gray-500">
+          <CalendarClock className="w-3.5 h-3.5 text-gray-400" strokeWidth={1.75} />
+          Due {fmt(dueAt) || 'not set'}
+        </div>
+        {doneAt && (
+          <div className={`flex items-center gap-2 ${breached ? 'text-red-600' : 'text-emerald-600'}`}>
+            <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+            {doneLabel} {fmt(doneAt)}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Fact({ icon: Icon, label, children }) {
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <span className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 inline-flex items-center justify-center flex-shrink-0">
+        <Icon className="w-4 h-4" strokeWidth={1.75} />
       </span>
-      {isOverdue && <span className="text-xs text-red-500 font-medium">OVERDUE</span>}
+      <span className="text-sm text-gray-500 flex-1">{label}</span>
+      <span className="text-sm font-medium text-gray-900 text-right">{children}</span>
     </div>
   )
 }
@@ -73,168 +150,138 @@ function CountdownDisplay({ targetDate, breached, isPaused, label }) {
 export default function SLATab({ slaData }) {
   if (!slaData) {
     return (
-      <div className="text-center py-12">
-        <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p className="text-gray-500 text-lg">No SLA policy applied</p>
-        <p className="text-gray-400 text-sm mt-1">This ticket is not covered by an SLA policy</p>
+      <div className="rounded-2xl border border-dashed border-gray-200 bg-white py-14 px-6 text-center">
+        <span className="w-12 h-12 rounded-2xl bg-gray-100 text-gray-400 inline-flex items-center justify-center">
+          <Gauge className="w-6 h-6" strokeWidth={1.5} />
+        </span>
+        <p className="mt-4 text-sm font-semibold text-gray-900">No SLA policy applied</p>
+        <p className="mt-1 text-sm text-gray-500">This ticket isn't covered by an active SLA policy.</p>
       </div>
     )
   }
 
+  const policy = slaData.policy || {}
+  const breachedAny = slaData.response_breached || slaData.resolution_breached
+  const clockStart = slaData.started_at || slaData.created_at
+
   return (
-    <div className="space-y-6">
-      <div className="bg-white -sm border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-gray-900">SLA Information</h3>
-        </div>
-
-        {/* SLA Status */}
-        {slaData.is_on_hold && (
-          <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
-              </svg>
-              <div className="flex-1">
-                <p className="font-medium text-yellow-800">SLA Timer is On Hold</p>
-                <p className="text-sm text-yellow-700 mt-1"><strong>Reason:</strong> {slaData.hold_reason}</p>
-                {slaData.hold_started_at && (
-                  <p className="text-xs text-yellow-600 mt-1">Hold started: {new Date(slaData.hold_started_at).toLocaleString()}</p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Live Countdown Timers */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className={`p-5 rounded-xl border-2 ${
-            slaData.response_breached ? 'bg-red-50 border-red-300' :
-            slaData.is_on_hold ? 'bg-yellow-50 border-yellow-200' :
-            'bg-gray-50 border-gray-200'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-                <label className="text-sm font-semibold text-gray-700">First Response</label>
-              </div>
-              {slaData.response_breached && (
-                <span className="px-2 py-1 text-xs bg-red-600 text-white rounded-full font-medium">Breached</span>
-              )}
-            </div>
-            <CountdownDisplay
-              targetDate={slaData.response_due_at}
-              breached={slaData.response_breached}
-              isPaused={slaData.is_on_hold}
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Due: {slaData.response_due_at ? new Date(slaData.response_due_at).toLocaleString() : 'Not set'}
-            </p>
-            {slaData.responded_at && (
-              <p className="text-xs text-green-600 mt-1">
-                ✓ Responded at: {new Date(slaData.responded_at).toLocaleString()}
-              </p>
-            )}
-          </div>
-
-          <div className={`p-5 rounded-xl border-2 ${
-            slaData.resolution_breached ? 'bg-red-50 border-red-300' :
-            slaData.is_on_hold ? 'bg-yellow-50 border-yellow-200' :
-            'bg-gray-50 border-gray-200'
-          }`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <label className="text-sm font-semibold text-gray-700">Resolution</label>
-              </div>
-              {slaData.resolution_breached && (
-                <span className="px-2 py-1 text-xs bg-red-600 text-white rounded-full font-medium">Breached</span>
-              )}
-            </div>
-            <CountdownDisplay
-              targetDate={slaData.resolution_due_at}
-              breached={slaData.resolution_breached}
-              isPaused={slaData.is_on_hold}
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Due: {slaData.resolution_due_at ? new Date(slaData.resolution_due_at).toLocaleString() : 'Not set'}
-            </p>
-            {slaData.resolved_at && (
-              <p className="text-xs text-green-600 mt-1">
-                ✓ Resolved at: {new Date(slaData.resolved_at).toLocaleString()}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Policy Details */}
-        <div className="border-t border-gray-200 pt-6">
-          <h4 className="text-md font-semibold text-gray-900 mb-4">Policy Details</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-gray-500">Policy Name</label>
-                <p className="text-gray-900 font-medium">{slaData.policy?.name}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Priority</label>
-                <p className="text-gray-900">
-                  <span className={`px-2 py-1 text-sm rounded-full ${
-                    slaData.policy?.priority === 'critical' ? 'bg-red-100 text-red-700' :
-                    slaData.policy?.priority === 'high' ? 'bg-orange-100 text-orange-700' :
-                    slaData.policy?.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {slaData.policy?.priority}
-                  </span>
-                </p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Total Hold Time</label>
-                <p className="text-gray-900">{slaData.total_hold_time || 0} minutes</p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium text-gray-500">First Response Target</label>
-                <p className="text-gray-900">{slaData.policy?.first_response_time} minutes</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Resolution Target</label>
-                <p className="text-gray-900">{slaData.policy?.resolution_time} minutes</p>
-              </div>
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <PriorityTile priority={policy.priority} />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{policy.name}</p>
+            <div className="mt-1 flex items-center gap-1.5">
+              <PriorityPill priority={policy.priority} />
             </div>
           </div>
         </div>
-
-        {/* Hold History */}
-        {slaData.hold_history && slaData.hold_history.length > 0 && (
-          <div className="border-t border-gray-200 pt-6 mt-6">
-            <h4 className="text-md font-semibold text-gray-900 mb-4">Hold History</h4>
-            <div className="space-y-2">
-              {slaData.hold_history.map((hold, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg text-sm">
-                  <div>
-                    <p className="font-medium text-gray-900">{hold.reason}</p>
-                    <p className="text-gray-500 text-xs">
-                      {hold.started_at && `Started: ${new Date(hold.started_at).toLocaleString()}`}
-                      {hold.ended_at && ` • Ended: ${new Date(hold.ended_at).toLocaleString()}`}
-                    </p>
-                  </div>
-                  <span className="text-gray-600">{hold.duration_minutes || 0} min</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        {breachedAny ? (
+          <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-red-200 bg-red-50 text-xs font-medium text-red-700">
+            <AlertTriangle className="w-3.5 h-3.5" strokeWidth={2} /> SLA breached
+          </span>
+        ) : slaData.is_on_hold ? (
+          <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-amber-200 bg-amber-50 text-xs font-medium text-amber-700">
+            <PauseCircle className="w-3.5 h-3.5" strokeWidth={2} /> Timer on hold
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-medium text-emerald-700">
+            <ShieldCheck className="w-3.5 h-3.5" strokeWidth={2} /> On track
+          </span>
         )}
       </div>
+
+      {/* On hold banner */}
+      {slaData.is_on_hold && (
+        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <span className="w-9 h-9 rounded-xl bg-white text-amber-600 inline-flex items-center justify-center flex-shrink-0">
+            <PauseCircle className="w-[18px] h-[18px]" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900">SLA timer is on hold</p>
+            {slaData.hold_reason && <p className="mt-0.5 text-sm text-amber-800">{slaData.hold_reason}</p>}
+            {slaData.hold_started_at && (
+              <p className="mt-1 text-xs text-amber-700">Since {fmt(slaData.hold_started_at)}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Clock restarted after a priority change */}
+      {slaData.restarted_at && (
+        <div className="flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+          <span className="w-9 h-9 rounded-xl bg-white text-sky-600 inline-flex items-center justify-center flex-shrink-0">
+            <RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-sky-900">SLA clock restarted</p>
+            <p className="mt-0.5 text-sm text-sky-800">
+              Targets below count from {fmt(slaData.restarted_at)}, not from when the ticket was created.
+              {slaData.responded_at && ' The first reply was already sent, so it counts as responded.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Timers */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <TimerCard
+          icon={MessageSquareReply}
+          label="First response"
+          targetMinutes={policy.first_response_time}
+          dueAt={slaData.response_due_at}
+          breached={slaData.response_breached}
+          onHold={slaData.is_on_hold}
+          doneAt={slaData.responded_at}
+          doneLabel="Responded"
+          startedAt={clockStart}
+        />
+        <TimerCard
+          icon={CircleCheckBig}
+          label="Resolution"
+          targetMinutes={policy.resolution_time}
+          dueAt={slaData.resolution_due_at}
+          breached={slaData.resolution_breached}
+          onHold={slaData.is_on_hold}
+          doneAt={slaData.resolved_at}
+          doneLabel="Resolved"
+          startedAt={clockStart}
+        />
+      </div>
+
+      {/* Policy details */}
+      <div className="rounded-2xl border border-gray-200 bg-white px-5 py-2">
+        <div className="divide-y divide-gray-100">
+          <Fact icon={Target} label="First response target">{shortMinutes(policy.first_response_time)}</Fact>
+          <Fact icon={Timer} label="Resolution target">{shortMinutes(policy.resolution_time)}</Fact>
+          <Fact icon={Clock} label="Total hold time">{slaData.total_hold_time ? shortMinutes(slaData.total_hold_time) : 'None'}</Fact>
+        </div>
+      </div>
+
+      {/* Hold history */}
+      {slaData.hold_history && slaData.hold_history.length > 0 && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <History className="w-4 h-4 text-gray-400" strokeWidth={1.75} />
+            <h4 className="text-sm font-semibold text-gray-900">Hold history</h4>
+          </div>
+          <div className="space-y-2">
+            {slaData.hold_history.map((hold, index) => (
+              <div key={index} className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{hold.reason}</p>
+                  <p className="text-xs text-gray-500">
+                    {hold.started_at && `Started ${fmt(hold.started_at)}`}
+                    {hold.ended_at && ` · Ended ${fmt(hold.ended_at)}`}
+                  </p>
+                </div>
+                <span className="text-xs font-medium text-gray-600 flex-shrink-0">{shortMinutes(hold.duration_minutes)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

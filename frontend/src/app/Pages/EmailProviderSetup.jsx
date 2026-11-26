@@ -1,14 +1,13 @@
 import React, { useState } from 'react'
-import { Head, Link, useForm } from '@inertiajs/react'
+import { Link, useForm } from '@inertiajs/react'
+import { ArrowLeft, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../utils/axios'
-import AppShell from '../components/AppShell'
-import SettingsSidenav from '../components/SettingsSidenav'
+import SettingsPage from '../components/settings/SettingsPage'
 import Select from '../components/SearchableSelect'
 import { THEME } from '../constants/theme'
 
 export default function EmailProviderSetup({ provider_id = 'imap', is_connected = false, config = {}, connected_mailboxes = [] }) {
-  const [sidenavOpen, setSidenavOpen] = useState(true)
   const [currentStep, setCurrentStep] = useState(is_connected ? 3 : 1)
   const [isConnected, setIsConnected] = useState(is_connected)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -137,60 +136,34 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
   }
 
   return (
-    <>
-      <Head title="Custom IMAP/SMTP Integration - Settings" />
-      <AppShell active="settings">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          {sidenavOpen && <SettingsSidenav activeSection="channels" />}
-
-          <main className="flex-1 bg-gray-50">
-            {/* Header */}
-            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                {!sidenavOpen && (
-                  <button className="p-2 rounded-md hover:bg-gray-100" onClick={() => setSidenavOpen(true)}>
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500">
-                      <path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/>
-                    </svg>
-                  </button>
-                )}
-                <Link href="/settings/channels/" className="p-2 rounded-lg hover:bg-gray-100 transition-colors" title="Back to Channels">
-                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </Link>
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gray-500">
-                    <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none">
-                      <rect x="2" y="4" width="20" height="16" rx="2" fill="white" fillOpacity="0.3"/>
-                      <path d="M2 8L12 14L22 8" stroke="white" strokeWidth="1.5"/>
-                      <path d="M6 17H18" stroke="white" strokeWidth="1" strokeLinecap="round" strokeDasharray="2 2"/>
-                    </svg>
-                  </div>
-                  <div>
-                    <h1 className="text-xl font-semibold text-gray-800">Custom IMAP/SMTP Integration</h1>
-                    <p className="text-sm text-gray-600">Configure IMAP/SMTP settings manually</p>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {isConnected ? (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full border border-green-200 text-sm">
-                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                    Connected
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full border border-gray-200 text-sm">
-                    <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
-                    Not Connected
-                  </div>
-                )}
-              </div>
-            </div>
-
+    <SettingsPage
+      group="Channels & apps"
+      title="Custom IMAP/SMTP"
+      description="Configure IMAP/SMTP settings manually."
+      icon={Mail}
+      headerActions={
+        <>
+          <span
+            className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border text-xs font-medium ${
+              isConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-100 text-gray-500'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+            {isConnected ? 'Connected' : 'Not connected'}
+          </span>
+          <Link
+            href="/administration/channels/"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-gray-200 bg-white text-sm text-gray-700 hover:bg-gray-50"
+          >
+            <ArrowLeft className="w-4 h-4" /> Channels
+          </Link>
+        </>
+      }
+    >
+      <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
             <div className="flex gap-0">
               {/* Step Sidebar */}
-              <div className="w-64 flex-shrink-0 border-r border-gray-200 p-6">
+              <div className="hidden md:block w-64 flex-shrink-0 border-r border-gray-200 p-6">
                 <div className="sticky top-6">
                   <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-6">Setup Steps</h3>
                   <div className="space-y-4">
@@ -242,7 +215,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
               </div>
 
               {/* Main Content */}
-              <div className="flex-1 p-6">
+              <div className="flex-1 min-w-0 p-4 sm:p-6">
                 <form onSubmit={handleSubmit} className="max-w-2xl space-y-6">
 
                   {/* Step 1: Connect */}
@@ -260,13 +233,13 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                               <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
                               <input type="email" value={data.email} onChange={(e) => setData('email', e.target.value)}
                                 placeholder="your-email@domain.com"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                             </div>
                             <div className="col-span-2">
                               <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
                               <input type="password" value={data.password} onChange={(e) => setData('password', e.target.value)}
                                 placeholder="Enter password"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                             </div>
                           </div>
 
@@ -277,13 +250,13 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                                 <label className="block text-sm font-medium text-gray-700 mb-1">IMAP Host <span className="text-red-500">*</span></label>
                                 <input type="text" value={data.imap_host} onChange={(e) => setData('imap_host', e.target.value)}
                                   placeholder="imap.domain.com"
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                               </div>
                               <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
                                 <input type="text" value={data.imap_port} onChange={(e) => setData('imap_port', e.target.value)}
                                   placeholder="993"
-                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                               </div>
                             </div>
                           </div>
@@ -296,7 +269,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                               </div>
                               <button type="button" onClick={() => setData('enable_smtp', !data.enable_smtp)}
                                 className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-                                  data.enable_smtp ? 'bg-blue-600' : 'bg-gray-200'
+                                  data.enable_smtp ? 'bg-[#0B3D26]' : 'bg-gray-200'
                                 }`}>
                                 <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
                                   data.enable_smtp ? 'translate-x-5' : 'translate-x-0'
@@ -309,13 +282,13 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                                   <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Host <span className="text-red-500">*</span></label>
                                   <input type="text" value={data.smtp_host} onChange={(e) => setData('smtp_host', e.target.value)}
                                     placeholder="smtp.domain.com"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                                 </div>
                                 <div>
                                   <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
                                   <input type="text" value={data.smtp_port} onChange={(e) => setData('smtp_port', e.target.value)}
                                     placeholder="587"
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0B3D26]/30 focus:border-[#0B3D26]" />
                                 </div>
                               </div>
                             )}
@@ -323,7 +296,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
 
                           <div className="flex items-center gap-2">
                             <input type="checkbox" id="use_ssl" checked={data.use_ssl} onChange={(e) => setData('use_ssl', e.target.checked)}
-                              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                              className="w-4 h-4 text-[#0B3D26] border-gray-300 rounded focus:ring-[#0B3D26]/30" />
                             <label htmlFor="use_ssl" className="text-sm text-gray-700">Use SSL/TLS encryption</label>
                           </div>
 
@@ -398,7 +371,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                           <div className="space-y-4">
                             <label className="flex items-start gap-3">
                               <input type="checkbox" checked={data.auto_create_tickets} onChange={(e) => setData('auto_create_tickets', e.target.checked)}
-                                className="w-4 h-4 mt-0.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                                className="w-4 h-4 mt-0.5 text-[#0B3D26] border-gray-300 rounded focus:ring-[#0B3D26]/30" />
                               <div>
                                 <span className="text-sm font-medium text-gray-900">Auto-create tickets</span>
                                 <p className="text-xs text-gray-500">Automatically create tickets from incoming emails</p>
@@ -406,7 +379,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                             </label>
                             <label className="flex items-start gap-3">
                               <input type="checkbox" checked={data.auto_reply} onChange={(e) => setData('auto_reply', e.target.checked)}
-                                className="w-4 h-4 mt-0.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                                className="w-4 h-4 mt-0.5 text-[#0B3D26] border-gray-300 rounded focus:ring-[#0B3D26]/30" />
                               <div>
                                 <span className="text-sm font-medium text-gray-900">Send auto-reply</span>
                                 <p className="text-xs text-gray-500">Send confirmation email when ticket is created</p>
@@ -530,9 +503,7 @@ export default function EmailProviderSetup({ provider_id = 'imap', is_connected 
                 </form>
               </div>
             </div>
-          </main>
-        </div>
-      </AppShell>
-    </>
+      </div>
+    </SettingsPage>
   )
 }

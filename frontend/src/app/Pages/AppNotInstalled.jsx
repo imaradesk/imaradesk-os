@@ -29,25 +29,13 @@ export default function AppNotInstalled({ app = {}, return_url = '/' }) {
               
               {/* App Info Card */}
               <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                <p className="text-sm text-gray-600 mb-3">{app.description}</p>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-500">
-                    {app.is_free ? (
-                      <span className="text-green-600 font-medium">Free</span>
-                    ) : (
-                      <>
-                        <span className="text-lg font-bold text-gray-900">${app.price}</span>
-                        <span className="text-gray-500">/month</span>
-                      </>
-                    )}
-                  </span>
-                </div>
+                <p className="text-sm text-gray-600">{app.description}</p>
               </div>
               
               {/* Actions */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Link
-                  href={`/settings/marketplace/?app=${app.slug}`}
+                  href={`/administration/marketplace/?app=${app.slug}`}
                   className={`flex-1 text-center px-6 py-3 rounded-lg font-medium ${THEME.button.primary}`}
                 >
                   <svg className="w-5 h-5 inline-block mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -65,7 +53,10 @@ export default function AppNotInstalled({ app = {}, return_url = '/' }) {
               
               {/* Help Text */}
               <p className="text-xs text-gray-400 text-center mt-6">
-                Need help? Contact us &nbsp; <a target="_blank" href="mailto:info@imaradesk.com" className="text-[#4a154b] hover:underline">Support</a>
+                Need help? Contact your administrator or visit the{' '}
+                <Link href="/administration/marketplace/" className="text-[#0B3D26] hover:underline">
+                  Marketplace
+                </Link>
               </p>
             </div>
           </div>
@@ -73,5 +64,4 @@ export default function AppNotInstalled({ app = {}, return_url = '/' }) {
       </AppShell>
     </>
   )
-
 }

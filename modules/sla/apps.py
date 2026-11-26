@@ -6,3 +6,6 @@ class SlaConfig(AppConfig):
     name = 'modules.sla'
     label = 'sla'  # Keep original label for migrations
     verbose_name = 'SLA Management'
+
+    def ready(self):
+        from . import signals  # noqa: F401

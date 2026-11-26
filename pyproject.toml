@@ -49,6 +49,9 @@ dependencies = [
     "pyotp>=2.9",
     "qrcode[pil]>=7.4",
     "disposable-email-domains>=0.0.90",
+    "bleach[css]>=6.1",
+    "cryptography>=42",
+    "user-agents>=2.2",
 ]
 
 [project.optional-dependencies]

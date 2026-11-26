@@ -73,7 +73,6 @@ def get_modules(request):
             'description': app.description,
             'icon': app.icon,
             'category': app.category,
-            'is_free': app.is_free,
             'is_installed': app.id in installed_ids,
         })
 
@@ -104,7 +103,6 @@ def save_modules(request):
                 InstalledApp.objects.create(
                     app=app,
                     is_active=True,
-                    subscription_status='active' if app.is_free else 'trial',
                 )
                 installed_count += 1
         except App.DoesNotExist:
@@ -359,7 +357,7 @@ def save_notifications(request):
         'email_ticket_assigned': 'notify_ticket_assigned',
         'email_ticket_reply': 'notify_new_comment',
         'email_ticket_resolved': 'notify_ticket_status_changed',
-        'email_sla_breach': 'notify_sla_response_breached',
+        'email_sla_breach': 'notify_sla_resolution_breached',
     }
 
     update_fields = []

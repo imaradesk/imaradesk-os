@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Head } from '@inertiajs/react';
 import toast from 'react-hot-toast';
+import api from '../../utils/axios';
 import AuthLayout from '../components/AuthLayout';
 import { Mail, Smartphone, Shield, ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
 
@@ -81,15 +82,9 @@ export default function TwoFactorVerify({
   const sendCode = async () => {
     setSending(true);
     try {
-      const response = await fetch('/2fa-verify/send-code/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': window.csrfToken || '',
-        },
-      });
+      const response = await api.post('/2fa-verify/send-code/');
 
-      const data = await response.json();
+      const data = response.data;
       if (data.success) {
         setCodeSent(true);
         toast.success('Verification code sent to your email');
@@ -112,19 +107,12 @@ export default function TwoFactorVerify({
 
     setVerifying(true);
     try {
-      const response = await fetch('/2fa-verify/verify/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': window.csrfToken || '',
-        },
-        body: JSON.stringify({ 
-          code: codeStr, 
-          method: selectedMethod 
-        }),
+      const response = await api.post('/2fa-verify/verify/', { 
+        code: codeStr, 
+        method: selectedMethod 
       });
 
-      const data = await response.json();
+      const data = response.data;
       if (data.success) {
         toast.success('Verification successful!');
         window.location.href = data.redirect || '/dashboard/';
@@ -150,22 +138,14 @@ export default function TwoFactorVerify({
           value={digit}
           onChange={(e) => handleCodeInput(index, e.target.value)}
           onKeyDown={(e) => handleKeyDown(index, e)}
-          className="w-12 h-14 text-center text-2xl font-semibold border-2 border-gray-300 rounded-lg focus:border-[#4a154b] focus:ring-2 focus:ring-[#4a154b]/20 outline-none transition-all"
+          className="w-12 h-14 text-center text-2xl font-semibold border-2 border-gray-300 rounded-lg focus:border-[#0B3D26] focus:ring-2 focus:ring-[#0B3D26]/20 outline-none transition-all"
         />
       ))}
     </div>
   );
 
   return (
-    <AuthLayout
-      title="Two-Factor Authentication"
-      subtitle="Verify your identity to continue securely"
-      features={[
-        'Extra layer of security for your account',
-        'Protect against unauthorized access',
-        'Quick and easy verification'
-      ]}
-    >
+    <AuthLayout>
       <Head title="Two-Factor Verification" />
       
       <div className="max-w-md mx-auto">
@@ -174,7 +154,7 @@ export default function TwoFactorVerify({
           <>
             <div className="text-center mb-8">
               <div className="mx-auto w-16 h-16 rounded-full bg-purple-50 flex items-center justify-center mb-4">
-                <Shield className="w-8 h-8 text-[#4a154b]" />
+                <Shield className="w-8 h-8 text-[#0B3D26]" />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
                 Choose Verification Method
@@ -187,10 +167,10 @@ export default function TwoFactorVerify({
             <div className="space-y-4">
               <button
                 onClick={() => selectMethod('email')}
-                className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-[#4a154b] hover:bg-purple-50 transition-all flex items-center gap-4 group"
+                className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-[#0B3D26] hover:bg-purple-50 transition-all flex items-center gap-4 group"
               >
-                <div className="p-3 rounded-xl bg-purple-50 group-hover:bg-[#4a154b] transition-colors">
-                  <Mail className="w-6 h-6 text-[#4a154b] group-hover:text-white transition-colors" />
+                <div className="p-3 rounded-xl bg-purple-50 group-hover:bg-[#0B3D26] transition-colors">
+                  <Mail className="w-6 h-6 text-[#0B3D26] group-hover:text-white transition-colors" />
                 </div>
                 <div className="text-left flex-1">
                   <h3 className="font-semibold text-gray-900">Email Verification</h3>
@@ -200,10 +180,10 @@ export default function TwoFactorVerify({
 
               <button
                 onClick={() => selectMethod('authenticator')}
-                className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-[#4a154b] hover:bg-purple-50 transition-all flex items-center gap-4 group"
+                className="w-full p-4 border-2 border-gray-200 rounded-xl hover:border-[#0B3D26] hover:bg-purple-50 transition-all flex items-center gap-4 group"
               >
-                <div className="p-3 rounded-xl bg-purple-50 group-hover:bg-[#4a154b] transition-colors">
-                  <Smartphone className="w-6 h-6 text-[#4a154b] group-hover:text-white transition-colors" />
+                <div className="p-3 rounded-xl bg-purple-50 group-hover:bg-[#0B3D26] transition-colors">
+                  <Smartphone className="w-6 h-6 text-[#0B3D26] group-hover:text-white transition-colors" />
                 </div>
                 <div className="text-left flex-1">
                   <h3 className="font-semibold text-gray-900">Authenticator App</h3>
@@ -213,7 +193,7 @@ export default function TwoFactorVerify({
             </div>
 
             <div className="mt-6 text-center">
-              <a href="/login/" className="text-sm text-gray-500 hover:text-[#4a154b] flex items-center justify-center gap-1">
+              <a href="/login/" className="text-sm text-gray-500 hover:text-[#0B3D26] flex items-center justify-center gap-1">
                 <ArrowLeft className="w-4 h-4" />
                 Back to login
               </a>
@@ -226,7 +206,7 @@ export default function TwoFactorVerify({
           <>
             <div className="text-center mb-8">
               <div className="mx-auto w-16 h-16 rounded-full bg-purple-50 flex items-center justify-center mb-4">
-                <Mail className="w-8 h-8 text-[#4a154b]" />
+                <Mail className="w-8 h-8 text-[#0B3D26]" />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
                 Email Verification
@@ -244,7 +224,7 @@ export default function TwoFactorVerify({
                 <button
                   onClick={sendCode}
                   disabled={sending}
-                  className="w-full bg-[#4a154b] text-white py-3 rounded-lg font-semibold hover:bg-[#5a235c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full bg-[#0B3D26] text-white py-3 rounded-lg font-semibold hover:bg-[#14502F] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {sending && <Loader2 className="w-5 h-5 animate-spin" />}
                   {sending ? 'Sending...' : 'Send Verification Code'}
@@ -257,7 +237,7 @@ export default function TwoFactorVerify({
                 <button
                   onClick={verifyCode}
                   disabled={verifying || code.join('').length !== 6}
-                  className="w-full bg-[#4a154b] text-white py-3 rounded-lg font-semibold hover:bg-[#5a235c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full bg-[#0B3D26] text-white py-3 rounded-lg font-semibold hover:bg-[#14502F] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {verifying && <Loader2 className="w-5 h-5 animate-spin" />}
                   {verifying ? 'Verifying...' : 'Verify & Sign In'}
@@ -267,7 +247,7 @@ export default function TwoFactorVerify({
                   <button
                     onClick={sendCode}
                     disabled={sending}
-                    className="text-sm text-[#4a154b] hover:underline"
+                    className="text-sm text-[#0B3D26] hover:underline"
                   >
                     Didn't receive the code? Send again
                   </button>
@@ -278,7 +258,7 @@ export default function TwoFactorVerify({
             <div className="mt-6 text-center">
               <button 
                 onClick={goBack}
-                className="text-sm text-gray-500 hover:text-[#4a154b] flex items-center justify-center gap-1 mx-auto"
+                className="text-sm text-gray-500 hover:text-[#0B3D26] flex items-center justify-center gap-1 mx-auto"
               >
                 <ArrowLeft className="w-4 h-4" />
                 {email_2fa_enabled && authenticator_2fa_enabled ? 'Choose different method' : 'Back to login'}
@@ -292,7 +272,7 @@ export default function TwoFactorVerify({
           <>
             <div className="text-center mb-8">
               <div className="mx-auto w-16 h-16 rounded-full bg-purple-50 flex items-center justify-center mb-4">
-                <Smartphone className="w-8 h-8 text-[#4a154b]" />
+                <Smartphone className="w-8 h-8 text-[#0B3D26]" />
               </div>
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">
                 Authenticator Verification
@@ -308,7 +288,7 @@ export default function TwoFactorVerify({
               <button
                 onClick={verifyCode}
                 disabled={verifying || code.join('').length !== 6}
-                className="w-full bg-[#4a154b] text-white py-3 rounded-lg font-semibold hover:bg-[#5a235c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full bg-[#0B3D26] text-white py-3 rounded-lg font-semibold hover:bg-[#14502F] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {verifying && <Loader2 className="w-5 h-5 animate-spin" />}
                 {verifying ? 'Verifying...' : 'Verify & Sign In'}
@@ -318,7 +298,7 @@ export default function TwoFactorVerify({
             <div className="mt-6 text-center">
               <button 
                 onClick={goBack}
-                className="text-sm text-gray-500 hover:text-[#4a154b] flex items-center justify-center gap-1 mx-auto"
+                className="text-sm text-gray-500 hover:text-[#0B3D26] flex items-center justify-center gap-1 mx-auto"
               >
                 <ArrowLeft className="w-4 h-4" />
                 {email_2fa_enabled && authenticator_2fa_enabled ? 'Choose different method' : 'Back to login'}

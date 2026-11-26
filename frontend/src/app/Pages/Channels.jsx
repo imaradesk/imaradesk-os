@@ -1,146 +1,232 @@
-import React, { useState } from 'react'
-import { Head, Link, router } from '@inertiajs/react'
+import React, { useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
-import api from '../../utils/axios'
-import AppShell from '../components/AppShell'
-import SettingsSidenav from '../components/SettingsSidenav'
-import ConfirmDialog from '../components/ConfirmDialog'
-import Drawer from '../components/Drawer'
-import { Popover } from '../../components/Popover'
-import { COLORS } from '../constants/theme'
+import { Link } from '@inertiajs/react'
 import {
-  GlobalOutlined,
-  MailOutlined,
-  ApiOutlined,
-  SettingOutlined,
-  InfoCircleOutlined,
-} from '@ant-design/icons'
+  Clock, Globe, Info, LayoutGrid, Mail, MessageSquare,
+  Plug, Radio, Search, Send, Unplug, Webhook, X, Settings2,
+} from 'lucide-react'
+import api from '../../utils/axios'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { Popover } from '../../components/Popover'
+import { HIDDEN_CHANNELS } from '../components/SidebarNav'
+import SettingsPage, { Toggle } from '../components/settings/SettingsPage'
+import Tabs from '../components/Tabs'
 
+// Channel icons come from the database as Ant Design names; map them to the
+// lucide set used across settings so the tiles match the integrations grid.
 const ICON_MAP = {
-  GlobalOutlined,
-  MailOutlined,
-  ApiOutlined,
+  GlobalOutlined: Globe,
+  MailOutlined: Mail,
+  MessageOutlined: MessageSquare,
+  SendOutlined: Send,
+  ApiOutlined: Webhook,
 }
 
-function ChannelCard({ channel, onToggle, onConfigure }) {
-  const Icon = ICON_MAP[channel.icon] || GlobalOutlined
-  const isComingSoon = channel.status === 'coming_soon'
+const isComingSoon = (channel) => channel.status === 'coming_soon'
+
+const FILTERS = [
+  { id: 'all', label: 'All', icon: LayoutGrid, match: () => true },
+  { id: 'enabled', label: 'Enabled', icon: Plug, match: (c) => c.is_activated && !isComingSoon(c) },
+  { id: 'disabled', label: 'Disabled', icon: Unplug, match: (c) => !c.is_activated && !isComingSoon(c) },
+  { id: 'soon', label: 'Coming soon', icon: Clock, match: isComingSoon },
+]
+
+const TILE_SIZES = {
+  sm: { box: 'w-9 h-9 rounded-lg', icon: 'w-4 h-4' },
+  md: { box: 'w-12 h-12 rounded-xl', icon: 'w-5 h-5' },
+}
+
+/** Tinted tile that keeps each channel's own colour from the database. */
+function ChannelTile({ channel, size = 'md', className = '' }) {
+  const Icon = ICON_MAP[channel.icon] || Globe
+  const s = TILE_SIZES[size]
+  return (
+    <span
+      className={`${s.box} flex-shrink-0 inline-flex items-center justify-center shadow-sm ring-1 ring-inset ring-black/[0.04] ${className}`}
+      style={{ backgroundColor: channel.icon_bg || '#f3f4f6', color: channel.icon_color || '#6b7280' }}
+    >
+      <Icon className={s.icon} strokeWidth={1.75} />
+    </span>
+  )
+}
+
+function SoonPill() {
+  return (
+    <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full border border-amber-200 bg-amber-50 text-xs font-medium text-amber-700">
+      <Clock className="w-3 h-3" /> Soon
+    </span>
+  )
+}
+
+/** Connection wins over activation: "Connected" means it has been configured. */
+function ChannelPill({ channel }) {
+  if (isComingSoon(channel)) return <SoonPill />
+
+  if (channel.is_connected) {
+    return (
+      <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-emerald-200 bg-emerald-50 text-xs font-medium text-emerald-700">
+        <span className="relative flex w-2 h-2">
+          <span className="absolute inset-0 rounded-full bg-emerald-500 opacity-60 animate-ping" />
+          <span className="relative w-2 h-2 rounded-full bg-emerald-500" />
+        </span>
+        Connected
+      </span>
+    )
+  }
+
+  if (channel.is_activated) {
+    return (
+      <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-[#0B3D26]/20 bg-[#0B3D26]/[0.07] text-xs font-medium text-[#0B3D26]">
+        <span className="w-2 h-2 rounded-full bg-[#0B3D26]" />
+        Enabled
+      </span>
+    )
+  }
 
   return (
-    <div className={`group bg-white border border-l-2 p-5 flex flex-col justify-between transition-colors ${
-      channel.is_connected ? 'border-[#4a154b]/30' : 'border-gray-200'
-    } ${isComingSoon ? 'opacity-60' : 'hover:border-l-[#4a154b]'}`}>
-      <div>
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <Icon style={{ fontSize: 24, color: channel.icon_color }} />
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-gray-800 text-sm">{channel.name}</h3>
-                {isComingSoon ? (
-                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">Coming soon</span>
-                ) : channel.is_connected ? (
-                  <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                    Connected
-                  </span>
-                ) : (
-                  <span className="text-xs text-gray-400 font-medium">Not connected</span>
-                )}
-              </div>
-            </div>
+    <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-gray-200 bg-gray-100 text-xs font-medium text-gray-500">
+      <span className="w-2 h-2 rounded-full bg-gray-400" />
+      Disabled
+    </span>
+  )
+}
+
+function ChannelSettings({ channel }) {
+  if (isComingSoon(channel)) return null
+
+  if (channel.channel_id === 'email') {
+    return (
+      <Link
+        href="/administration/integrations/email/imap/"
+        className="inline-flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs font-medium text-gray-500 hover:text-[#0B3D26] hover:bg-gray-50 transition-colors"
+      >
+        Configure
+        <Settings2 className="w-4 h-4" />
+      </Link>
+    )
+  }
+
+  if (channel.channel_id === 'web') {
+    return (
+      <Popover
+        width={280}
+        maxHeight={300}
+        showArrow
+        trigger={({ toggle }) => (
+          <button
+            type="button"
+            onClick={toggle}
+            title="About the web channel"
+            className="inline-flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs font-medium text-gray-500 hover:text-[#0B3D26] hover:bg-gray-50 transition-colors"
+          >
+            <span className="hidden sm:inline">Details</span>
+            <Info className="w-4 h-4" />
+          </button>
+        )}
+      >
+        {() => (
+          <div className="p-4">
+            <h4 className="font-semibold text-gray-900 text-sm mb-2">About the web channel</h4>
+            <p className="text-xs text-gray-600 leading-relaxed">The web channel handles tickets created through:</p>
+            <ul className="text-xs text-gray-600 mt-2 space-y-1.5">
+              <li className="flex items-start gap-2">
+                <span className="text-[#0B3D26] mt-0.5">•</span>
+                <span><strong>Customer portal</strong> – tickets submitted by customers via the self-service portal</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#0B3D26] mt-0.5">•</span>
+                <span><strong>Agent dashboard</strong> – tickets created manually by agents on behalf of customers</span>
+              </li>
+            </ul>
+            <p className="text-xs text-gray-500 mt-3">
+              Disabling this channel prevents new tickets from being created through these methods.
+            </p>
           </div>
-        </div>
-        <p className="text-sm text-gray-500 mb-4 leading-relaxed">{channel.description}</p>
+        )}
+      </Popover>
+    )
+  }
+
+  return null
+}
+
+function ChannelCard({ channel, index, onToggle }) {
+  const soon = isComingSoon(channel)
+  const providers = channel.connected_providers || []
+
+  return (
+    <article
+      style={{ animationDelay: `${Math.min(index, 8) * 50}ms` }}
+      className={`group relative flex flex-col rounded-2xl border bg-white p-5 animate-portalRise ${
+        soon
+          ? 'border-gray-200 cursor-default'
+          : `portal-lift hover:shadow-card-hover hover:border-[#0B3D26]/30 ${channel.is_activated ? 'border-[#0B3D26]/30' : 'border-gray-200'}`
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <ChannelTile
+          channel={channel}
+          className={`transition-transform duration-300 ${soon ? 'opacity-60 grayscale' : 'group-hover:scale-105 group-hover:-rotate-3'}`}
+        />
+        <ChannelPill channel={channel} />
       </div>
 
-      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-        <div className="flex items-center gap-2">
-          {isComingSoon ? (
-            <span className="text-xs text-gray-400 italic">Not yet available</span>
+      <h3 className="mt-4 font-semibold text-gray-900 group-hover:text-[#0B3D26] transition-colors">
+        {channel.name}
+      </h3>
+      <p className="mt-1.5 text-sm text-gray-500 leading-relaxed line-clamp-2">{channel.description}</p>
+
+      {/* Channel-specific setup state */}
+      {providers.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {providers.map((provider) => (
+            <span
+              key={provider.id || provider.name}
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border border-emerald-200 bg-emerald-50 text-[11px] font-medium text-emerald-700"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {provider.name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-auto pt-4 flex items-center justify-between gap-3 border-t border-gray-100">
+        <div className="flex items-center gap-2 min-w-0">
+          {soon ? (
+            <span className="text-xs text-gray-400">Not yet available</span>
           ) : (
             <>
-              <button
-                onClick={() => onToggle(channel)}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  channel.is_activated ? 'bg-[#4a154b]' : 'bg-gray-300'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                    channel.is_activated ? 'translate-x-[18px]' : 'translate-x-[3px]'
-                  }`}
-                />
-              </button>
-              <span className="text-xs text-gray-500">{channel.is_activated ? 'Enabled' : 'Disabled'}</span>
+              <Toggle
+                checked={channel.is_activated}
+                onChange={() => onToggle(channel)}
+                label={`${channel.is_activated ? 'Disable' : 'Enable'} ${channel.name}`}
+              />
+              <span className="text-xs text-gray-500 truncate">
+                {channel.is_activated ? 'Enabled' : 'Disabled'}
+              </span>
             </>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          {channel.is_connected && channel.inbox_count > 0 && (
-            <span className="text-xs text-gray-400">{channel.inbox_count} inbox{channel.inbox_count !== 1 ? 'es' : ''}</span>
+
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {!soon && channel.is_connected && channel.inbox_count > 0 && (
+            <span className="hidden sm:inline text-xs text-gray-400 tabular-nums mr-1">
+              {channel.inbox_count} inbox{channel.inbox_count !== 1 ? 'es' : ''}
+            </span>
           )}
-          {!isComingSoon && channel.channel_id === 'email' && (
-            <button
-              onClick={() => onConfigure && onConfigure(channel)}
-              className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-              title="Configure email integration"
-            >
-              <SettingOutlined style={{ fontSize: 16 }} />
-            </button>
-          )}
-          {!isComingSoon && channel.channel_id === 'web' && (
-            <Popover
-              width={280}
-              maxHeight={300}
-              showArrow={true}
-              trigger={({ toggle }) => (
-                <button
-                  onClick={toggle}
-                  className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
-                >
-                  <InfoCircleOutlined style={{ fontSize: 16 }} />
-                </button>
-              )}
-            >
-              {({ close }) => (
-                <div className="p-4">
-                  <h4 className="font-semibold text-gray-800 text-sm mb-2">About Web Channel</h4>
-                  <p className="text-xs text-gray-600 leading-relaxed">
-                    The Web channel handles tickets created through:
-                  </p>
-                  <ul className="text-xs text-gray-600 mt-2 space-y-1.5">
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#4a154b] mt-0.5">•</span>
-                      <span><strong>Customer Portal</strong> – Tickets submitted by customers via the self-service portal</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <span className="text-[#4a154b] mt-0.5">•</span>
-                      <span><strong>Agent Dashboard</strong> – Tickets created manually by agents on behalf of customers</span>
-                    </li>
-                  </ul>
-                  <p className="text-xs text-gray-500 mt-3 italic">
-                    Disabling this channel will prevent new tickets from being created through these methods.
-                  </p>
-                </div>
-              )}
-            </Popover>
-          )}
+          <ChannelSettings channel={channel} />
         </div>
       </div>
-    </div>
+    </article>
   )
 }
 
 export default function Channels({ channels = [] }) {
-  const [sidenavOpen, setSidenavOpen] = useState(true)
-  const [channelsList, setChannelsList] = useState(channels)
+  const [channelsList, setChannelsList] = useState(() => channels.filter((c) => !HIDDEN_CHANNELS.includes(c.channel_id)))
+  const [filter, setFilter] = useState('all')
+  const [query, setQuery] = useState('')
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, channel: null })
-  const [drawerOpen, setDrawerOpen] = useState(false)
-
-  const emailChannel = channelsList.find(ch => ch.channel_id === 'email')
-  const imapConnected = emailChannel?.connected_providers?.some(p => p.id === 'imap')
-  const imapProvider = emailChannel?.connected_providers?.find(p => p.id === 'imap')
 
   const CHANNEL_INFO = {
     web: {
@@ -151,7 +237,27 @@ export default function Channels({ channels = [] }) {
       enable: 'Enabling the Email channel allows customers to create tickets by sending emails. Replies will be synced automatically.',
       disable: 'Disabling the Email channel will stop new tickets from being created via email. Existing tickets and email threads will remain intact.',
     },
+    webhooks: {
+      enable: 'Enabling Webhooks allows you to send real-time ticket events to your custom endpoints for external integrations.',
+      disable: 'Disabling Webhooks will stop sending events to your configured endpoints. Endpoint configurations will be preserved.',
+    },
   }
+
+  const counts = useMemo(
+    () => Object.fromEntries(FILTERS.map((f) => [f.id, channelsList.filter(f.match).length])),
+    [channelsList]
+  )
+
+  const visible = useMemo(() => {
+    const match = FILTERS.find((f) => f.id === filter).match
+    const q = query.trim().toLowerCase()
+    return channelsList.filter(
+      (c) => match(c) && (!q || c.name.toLowerCase().includes(q) || (c.description || '').toLowerCase().includes(q))
+    )
+  }, [channelsList, filter, query])
+
+  const enabledCount = channelsList.filter((c) => c.is_activated && !isComingSoon(c)).length
+  const connectedCount = channelsList.filter((c) => c.is_connected).length
 
   const handleToggleRequest = (channel) => {
     setConfirmDialog({ isOpen: true, channel })
@@ -164,8 +270,8 @@ export default function Channels({ channels = [] }) {
     try {
       const res = await api.post(`/api/channels/${channel.id}/toggle/`)
       if (res.data.success) {
-        setChannelsList(prev =>
-          prev.map(ch => ch.id === channel.id ? { ...ch, is_activated: res.data.is_activated } : ch)
+        setChannelsList((prev) =>
+          prev.map((ch) => (ch.id === channel.id ? { ...ch, is_activated: res.data.is_activated } : ch))
         )
         toast.success(res.data.message)
       }
@@ -184,7 +290,121 @@ export default function Channels({ channels = [] }) {
 
   return (
     <>
-      <Head title="Channels - Settings" />
+      <SettingsPage
+        group="Channels & apps"
+        title="Channels"
+        icon={Radio}
+        description="Turn customer conversations into tickets from every channel you support."
+      >
+        <div className="space-y-6">
+          {/* Overview */}
+          <section className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 sm:p-6 animate-portalRise">
+            <div aria-hidden="true" className="pointer-events-none absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#0B3D26]/10 blur-3xl" />
+            <div className="relative flex flex-col sm:flex-row sm:items-center gap-5">
+              <div className="flex items-start gap-4 flex-1 min-w-0">
+                <span className="w-11 h-11 rounded-xl bg-[#0B3D26] text-white inline-flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <Radio className="w-5 h-5" strokeWidth={1.75} />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold tracking-tight text-gray-900">Every conversation, one inbox</h2>
+                  <p className="mt-0.5 text-sm text-gray-500">
+                    Email and the customer portal create tickets in the same place, so nothing slips through.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 sm:pl-5 sm:border-l border-gray-200">
+                <div className="flex -space-x-2">
+                  {channelsList.slice(0, 4).map((channel) => (
+                    <ChannelTile key={channel.id} channel={channel} size="sm" className="ring-2 ring-white" />
+                  ))}
+                </div>
+                <div>
+                  <p className="text-xl font-semibold text-gray-900 tabular-nums">
+                    {enabledCount}
+                    <span className="text-sm font-normal text-gray-400"> / {channelsList.length}</span>
+                  </p>
+                  <p className="text-xs text-gray-500">channels enabled</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <Tabs
+              label="Filter channels"
+              active={filter}
+              onChange={setFilter}
+              tabs={FILTERS.map((f) => ({ ...f, count: counts[f.id] }))}
+            />
+
+            <div className="relative md:ml-auto md:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') setQuery('') }}
+                placeholder="Search channels"
+                aria-label="Search channels"
+                className="w-full h-9 pl-9 pr-8 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0B3D26]/20 focus:border-[#0B3D26] transition-shadow"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Grid */}
+          {visible.length > 0 ? (
+            <div key={filter} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {visible.map((channel, index) => (
+                <ChannelCard key={channel.id} channel={channel} index={index} onToggle={handleToggleRequest} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-gray-300 bg-white py-14 px-6 text-center animate-portalRise">
+              <span className="mx-auto mb-3 w-12 h-12 rounded-xl bg-gray-100 text-gray-400 inline-flex items-center justify-center">
+                <Unplug className="w-6 h-6" strokeWidth={1.5} />
+              </span>
+              <h3 className="text-sm font-semibold text-gray-900">No channels found</h3>
+              <p className="mt-1 text-sm text-gray-500">
+                {query ? `Nothing matches “${query}”.` : 'Nothing in this view yet.'}
+              </p>
+              {(query || filter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => { setQuery(''); setFilter('all') }}
+                  className="mt-4 h-8 px-3 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Footer summary */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {connectedCount} connected
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0B3D26]" />
+              {enabledCount} enabled
+            </span>
+            <span>Changes apply immediately to new conversations.</span>
+          </div>
+
+        </div>
 
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
@@ -196,90 +416,7 @@ export default function Channels({ channels = [] }) {
         cancelText="Cancel"
         confirmStyle={confirmDialog.channel?.is_activated ? 'danger' : 'primary'}
       />
-
-      <AppShell active="settings">
-        <div className="flex flex-1 min-h-[calc(100vh-3rem)]">
-          {sidenavOpen && <SettingsSidenav activeSection="channels" />}
-
-          <main className="flex-1 bg-gray-50">
-            <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-3">
-              {!sidenavOpen && (
-                <button
-                  className="p-2 rounded-md hover:bg-gray-100"
-                  title="Show Settings Menu"
-                  onClick={() => setSidenavOpen(true)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-gray-500">
-                    <path d="M13.5 6 21 12l-7.5 6v-4.5H3v-3h10.5V6z"/>
-                  </svg>
-                </button>
-              )}
-              <h1 className="text-xl font-semibold text-gray-800">Channels</h1>
-            </div>
-
-            <div className="p-6">
-              <p className="text-sm text-gray-500 mb-6">
-                Enable and configure the communication channels available for your inboxes.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {channelsList.map(channel => (
-                  <ChannelCard
-                    key={channel.id}
-                    channel={channel}
-                    onToggle={handleToggleRequest}
-                    onConfigure={() => setDrawerOpen(true)}
-                  />
-                ))}
-              </div>
-            </div>
-          </main>
-        </div>
-      </AppShell>
-
-      {/* Email Provider Drawer */}
-      <Drawer
-        isOpen={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title="Select Email Provider"
-        width="max-w-sm"
-      >
-        <div className="flex-1 overflow-y-auto p-6">
-          <p className="text-sm text-gray-500 mb-4">Choose a provider to configure email integration.</p>
-          <div className="space-y-3">
-            <button
-              onClick={() => {
-                setDrawerOpen(false)
-                router.visit('/administration/integrations/email/imap/')
-              }}
-              className="w-full flex items-center gap-4 p-4 bg-white border border-gray-200 rounded-xl hover:border-[#4a154b]/40 hover:shadow-sm transition-all text-left group"
-            >
-              <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 group-hover:bg-[#4a154b]/10 transition-colors">
-                <svg className="w-5 h-5 text-gray-600 group-hover:text-[#4a154b] transition-colors" viewBox="0 0 24 24" fill="none">
-                  <rect x="2" y="4" width="20" height="16" rx="2" fill="currentColor" fillOpacity="0.15"/>
-                  <path d="M2 8L12 14L22 8" stroke="currentColor" strokeWidth="1.5"/>
-                  <path d="M6 17H18" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeDasharray="2 2"/>
-                </svg>
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-gray-800 group-hover:text-[#4a154b] transition-colors">Custom SMTP/IMAP</h3>
-                  {imapConnected && (
-                    <span className="flex items-center gap-1 text-xs text-green-600 font-medium bg-green-50 px-1.5 py-0.5 rounded-full">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                      Connected{imapProvider?.count > 1 ? ` (${imapProvider.count})` : ''}
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">Connect using your own mail server credentials</p>
-              </div>
-              <svg className="w-4 h-4 text-gray-400 group-hover:text-[#4a154b] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </Drawer>
+      </SettingsPage>
     </>
   )
 }

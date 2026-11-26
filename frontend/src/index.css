@@ -1,6 +1,363 @@
+@import url('https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,100..900;1,100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --brand: #0B3D26;
+  --brand-hover: #14502F;
+  --brand-light: #f5eef5;
+  --radius-card: 12px;
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #e2e8f0 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #e2e8f0;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #cbd5e1;
+}
+
+/* Focus rings - clean and on-brand */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Smooth transitions for interactive elements */
+button, a, input, select, textarea {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Form inputs — consistent focus */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="number"],
+input[type="date"],
+textarea,
+select {
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="search"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(11, 61, 38, 0.08);
+}
+
+/* Borderless title input with animated bottom underline */
+input.title-underline-input {
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background-color: transparent;
+  background-image: linear-gradient(var(--brand), var(--brand)), linear-gradient(#e5e7eb, #e5e7eb);
+  background-repeat: no-repeat;
+  background-position: center bottom, center bottom;
+  background-size: 0% 2px, 100% 1px;
+  transition: background-size 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input.title-underline-input:focus,
+input.title-underline-input:focus-visible {
+  outline: none;
+  border: 0;
+  box-shadow: none;
+  background-size: 100% 2px, 100% 1px;
+}
+
+/* ── Rich editor (react-draft-wysiwyg) ───────────────────── */
+.rich-editor {
+  --re-bg: #ffffff;
+  --re-toolbar-bg: #f9fafb;
+  --re-border: #e5e7eb;
+  --re-border-hover: #d1d5db;
+  --re-text: #111827;
+  --re-muted: #9ca3af;
+  --re-btn-hover: #f3f4f6;
+  --re-btn-active: rgba(11, 61, 38, 0.1);
+  --re-accent: var(--brand);
+  --re-ring: rgba(11, 61, 38, 0.12);
+  --re-popup-bg: #ffffff;
+  --re-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.18);
+}
+.app-dark .rich-editor {
+  --re-bg: #1b1f24;
+  --re-toolbar-bg: #20252b;
+  --re-border: rgba(255, 255, 255, 0.1);
+  --re-border-hover: rgba(255, 255, 255, 0.18);
+  --re-text: #e5e7eb;
+  --re-muted: #6b7280;
+  --re-btn-hover: rgba(255, 255, 255, 0.06);
+  --re-btn-active: rgba(156,163,175, 0.18);
+  --re-accent: #9ca3af;
+  --re-ring: rgba(156,163,175, 0.2);
+  --re-popup-bg: #23282e;
+  --re-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+}
+
+.rich-editor__wrapper {
+  background: var(--re-bg);
+  border: 1px solid var(--re-border);
+  border-radius: 12px;
+  overflow: visible;
+  transition: border-color 150ms ease, box-shadow 200ms ease;
+}
+.rich-editor__wrapper:hover { border-color: var(--re-border-hover); }
+.rich-editor__wrapper:focus-within {
+  border-color: var(--re-accent);
+  box-shadow: 0 0 0 4px var(--re-ring);
+}
+
+.rich-editor .rich-editor__toolbar {
+  background: var(--re-toolbar-bg);
+  border: 0;
+  border-bottom: 1px solid var(--re-border);
+  border-radius: 12px 12px 0 0;
+  padding: 6px 8px;
+  margin: 0;
+  gap: 2px;
+}
+.rich-editor .rdw-option-wrapper,
+.rich-editor .rdw-dropdown-wrapper {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  height: 28px;
+  min-width: 28px;
+  margin: 0 1px;
+  padding: 4px;
+  color: var(--re-text);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.rich-editor .rdw-option-wrapper:hover,
+.rich-editor .rdw-dropdown-wrapper:hover {
+  background: var(--re-btn-hover);
+  box-shadow: none;
+}
+.rich-editor .rdw-option-active {
+  background: var(--re-btn-active);
+  border-color: transparent;
+  box-shadow: none;
+}
+.rich-editor .rdw-inline-wrapper,
+.rich-editor .rdw-block-wrapper,
+.rich-editor .rdw-list-wrapper,
+.rich-editor .rdw-text-align-wrapper,
+.rich-editor .rdw-link-wrapper,
+.rich-editor .rdw-image-wrapper,
+.rich-editor .rdw-history-wrapper {
+  margin: 0;
+  padding-right: 6px;
+  margin-right: 4px;
+  border-right: 1px solid var(--re-border);
+}
+.rich-editor .rdw-history-wrapper { border-right: 0; }
+.rich-editor .rdw-dropdown-selectedtext { color: var(--re-text); padding: 0 4px; font-size: 13px; }
+.rich-editor .rdw-dropdown-carettoopen { border-top-color: var(--re-muted); }
+.rich-editor .rdw-dropdown-carettoclose { border-bottom-color: var(--re-muted); }
+.rich-editor .rdw-block-dropdown { width: 120px; }
+
+.app-dark .rich-editor .rdw-option-wrapper img { filter: invert(0.88); }
+
+/* Popups & dropdown menus */
+.rich-editor .rdw-dropdown-optionwrapper,
+.rich-editor .rdw-link-modal,
+.rich-editor .rdw-image-modal {
+  background: var(--re-popup-bg);
+  color: var(--re-text);
+  border: 1px solid var(--re-border);
+  border-radius: 10px;
+  box-shadow: var(--re-shadow);
+  z-index: 50;
+}
+.rich-editor .rdw-dropdown-optionwrapper { padding: 4px; overflow-y: auto; }
+.rich-editor .rdw-dropdownoption-default { border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+.rich-editor .rdw-dropdownoption-highlighted { background: var(--re-btn-hover); }
+.rich-editor .rdw-dropdownoption-active { background: var(--re-btn-active); }
+.rich-editor .rdw-link-modal input,
+.rich-editor .rdw-image-modal input {
+  background: var(--re-bg);
+  color: var(--re-text);
+  border: 1px solid var(--re-border);
+  border-radius: 6px;
+}
+.rich-editor .rdw-link-modal-btn,
+.rich-editor .rdw-image-modal-btn {
+  background: var(--re-btn-hover);
+  color: var(--re-text);
+  border: 1px solid var(--re-border);
+  border-radius: 6px;
+}
+.rich-editor .rdw-link-modal-btn:hover,
+.rich-editor .rdw-image-modal-btn:hover { box-shadow: none; border-color: var(--re-accent); }
+.rich-editor .rdw-image-modal-header-label-highlighted { border-bottom-color: var(--re-accent); }
+.rich-editor .rdw-image-modal-upload-option { background: var(--re-toolbar-bg); outline-color: var(--re-border); }
+
+/* Content area */
+.rich-editor .rich-editor__content {
+  min-height: 180px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 4px 16px;
+  color: var(--re-text);
+  font-size: 14px;
+  line-height: 1.65;
+  border-radius: 0 0 12px 12px;
+}
+.rich-editor .public-DraftEditorPlaceholder-root { color: var(--re-muted); }
+.rich-editor .public-DraftStyleDefault-block { margin: 0.6em 0; }
+.rich-editor .rdw-link-decorator-wrapper a { color: var(--re-accent); text-decoration: underline; }
+
+.rich-editor--compact .rich-editor__content { min-height: 88px; max-height: 220px; }
+
+/* Collapsed composer: bare placeholder until focused, like the description field */
+.conversation-composer:not(.is-expanded) .rich-editor__wrapper {
+  border-color: transparent;
+  background: transparent;
+  cursor: text;
+}
+.conversation-composer:not(.is-expanded) .rich-editor__wrapper:hover { border-color: var(--re-border); }
+.conversation-composer:not(.is-expanded) .rich-editor__toolbar { display: none; }
+.conversation-composer:not(.is-expanded) .rich-editor__content {
+  min-height: 44px;
+  max-height: none;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.conversation-composer:not(.is-expanded) .public-DraftStyleDefault-block { margin: 0; }
+
+.rich-editor.rich-editor--internal {
+  --re-bg: #fffbeb;
+  --re-toolbar-bg: #fef3c7;
+  --re-border: #fcd34d;
+  --re-border-hover: #f59e0b;
+  --re-accent: #d97706;
+  --re-ring: rgba(245, 158, 11, 0.18);
+  --re-btn-active: rgba(245, 158, 11, 0.22);
+}
+.app-dark .rich-editor.rich-editor--internal {
+  --re-bg: #2a2416;
+  --re-toolbar-bg: #322a18;
+  --re-border: rgba(245, 158, 11, 0.35);
+  --re-border-hover: rgba(245, 158, 11, 0.55);
+  --re-accent: #fbbf24;
+  --re-ring: rgba(251, 191, 36, 0.18);
+  --re-btn-active: rgba(251, 191, 36, 0.2);
+}
+
+.rich-editor .rdw-suggestion-dropdown {
+  background: var(--re-popup-bg);
+  color: var(--re-text);
+  border: 1px solid var(--re-border);
+  border-radius: 10px;
+  box-shadow: var(--re-shadow);
+  padding: 4px;
+  min-width: 180px;
+  max-height: 220px;
+}
+.rich-editor .rdw-suggestion-option {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.rich-editor .rdw-suggestion-option-active { background: var(--re-btn-hover); }
+.rich-editor .rdw-mention-link {
+  background: var(--re-btn-active);
+  color: var(--re-accent);
+  border-radius: 4px;
+  padding: 0 3px;
+  text-decoration: none;
+}
+
+/* Handwritten/typed style text for auth pages */
+.font-handwritten {
+  font-family: 'Caveat', cursive;
+}
+
+.text-highlight {
+  position: relative;
+  display: inline;
+  padding: 0 0.2em;
+}
+
+.text-highlight::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.1em;
+  top: 0.1em;
+  background: linear-gradient(120deg, #ff7f7f 0%, #ffb3b3 100%);
+  z-index: -1;
+  transform: skewX(-3deg) rotate(-1deg);
+  border-radius: 4px;
+  opacity: 0.7;
+}
+
+.text-underline-accent {
+  position: relative;
+  display: inline;
+}
+
+.text-underline-accent::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.1em;
+  height: 3px;
+  background: linear-gradient(90deg, #00c4b4 0%, #00a89a 100%);
+  border-radius: 2px;
+  transform: scaleX(0.95);
+}
+
+@keyframes loader-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0) scale(0.85); }
+  40% { opacity: 1; transform: translateY(-6px) scale(1); }
+}
+
+.animate-loader-dot {
+  animation: loader-dot 1s ease-in-out infinite;
+}
 
 @keyframes float {
   0%, 100% {
@@ -76,38 +433,537 @@
 
 /* Global Checkbox Styles - Theme Color */
 input[type="checkbox"] {
-  accent-color: #4a154b;
+  accent-color: #0B3D26;
 }
 
 input[type="checkbox"]:checked {
-  background-color: #4a154b;
-  border-color: #4a154b;
+  background-color: #0B3D26;
+  border-color: #0B3D26;
 }
 
 input[type="checkbox"]:focus {
   outline: none;
-  ring-color: #4a154b;
-  box-shadow: 0 0 0 2px rgba(74, 21, 75, 0.2);
+  ring-color: #0B3D26;
+  box-shadow: 0 0 0 2px rgba(11, 61, 38, 0.2);
 }
 
 /* For custom styled checkboxes */
 .checkbox-theme:checked,
-input[type="checkbox"].text-\[\#4a154b\]:checked {
-  background-color: #4a154b !important;
-  border-color: #4a154b !important;
+input[type="checkbox"].text-\[\#0B3D26\]:checked {
+  background-color: #0B3D26 !important;
+  border-color: #0B3D26 !important;
 }
 
 /* Radio button theme color */
 input[type="radio"] {
-  accent-color: #4a154b;
+  accent-color: #0B3D26;
 }
 
 input[type="radio"]:checked {
-  background-color: #4a154b;
-  border-color: #4a154b;
+  background-color: #0B3D26;
+  border-color: #0B3D26;
 }
 
 input[type="radio"]:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(74, 21, 75, 0.2);
+  box-shadow: 0 0 0 2px rgba(11, 61, 38, 0.2);
+}
+
+/* Decorative grid used by the widget settings page (light + dark). */
+.widget-grid {
+  background-image:
+    linear-gradient(to right, rgba(11, 61, 38, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(11, 61, 38, 0.07) 1px, transparent 1px);
+  background-size: 36px 36px;
+  -webkit-mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, #000 30%, transparent 78%);
+}
+.app-dark .widget-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+
+/* ─── App dark theme ───
+   Scoped to the main content area (.app-dark in AppShell). Remaps the light
+   Tailwind palette used across pages so they match the dark sidebar/top bar.
+   Portaled overlays (Modal, Drawer) read the theme from ThemeContext and apply
+   .app-dark to their own root, so they follow the same palette. */
+.app-dark { color-scheme: dark; color: #e5e7eb; scrollbar-color: #3a414b transparent; }
+.app-dark *::-webkit-scrollbar-thumb { background-color: #3a414b; }
+.app-dark *::-webkit-scrollbar-thumb:hover { background-color: #4b5361; }
+.app-dark input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.app-dark select,
+.app-dark textarea { background-color: #1b1f24; color: #f3f4f6; border-color: #363d47; }
+.app-dark input::placeholder, .app-dark textarea::placeholder { color: #7d8693; }
+.app-dark hr { border-color: #2a3038; }
+.app-dark .shadow-card, .app-dark .shadow-sm { box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+.app-dark .bg-white { background-color:#1b1f24 }
+.app-dark .bg-gray-50 { background-color:#15181c }
+.app-dark .bg-gray-100 { background-color:#22272e }
+.app-dark .bg-gray-200 { background-color:#2a3038 }
+.app-dark .bg-gray-300 { background-color:#3a414b }
+.app-dark .bg-gray-900 { background-color:#2f353e }
+.app-dark .bg-gray-50\/50 { background-color:#171a1f }
+.app-dark .bg-gray-50\/80 { background-color:#171a1f }
+.app-dark .bg-white\/40 { background-color:rgba(27,31,36,.4) }
+.app-dark .bg-white\/60 { background-color:rgba(27,31,36,.6) }
+.app-dark .bg-white\/70 { background-color:rgba(27,31,36,.7) }
+.app-dark .bg-white\/75 { background-color:rgba(27,31,36,.75) }
+.app-dark .bg-white\/80 { background-color:rgba(27,31,36,.8) }
+.app-dark .hover\:bg-white\/70:hover { background-color:rgba(35,40,48,.7) }
+.app-dark .border-white\/70 { border-color:rgba(255,255,255,.08) }
+.app-dark .bg-amber-50\/80 { background-color:rgba(245,158,11,.1) }
+.app-dark .border-amber-200\/80 { border-color:rgba(245,158,11,.3) }
+.app-dark .bg-gray-50\/60 { background-color:#171a1f }
+/* Segmented ticket tabs (components/ticket/TabBar.jsx) */
+.app-dark .tabbar-track { background-color:#15181c; --tw-ring-color:#2a3038 }
+.app-dark .tabbar-active { background-color:#2a3038; color:#f3f4f6; --tw-ring-color:rgba(255,255,255,.08); box-shadow:0 1px 2px rgba(0,0,0,.5) }
+.app-dark .tabbar-idle:hover { background-color:rgba(255,255,255,.05); color:#f3f4f6 }
+.app-dark .tabbar-accent { color:#6ee7b7 }
+.app-dark .tabbar-badge { background-color:#2a3038; color:#98a1ae }
+.app-dark .tabbar-badge-active { background-color:rgba(110,231,183,.14) }
+.app-dark .toggle-knob { background-color:#f3f4f6 }
+.app-dark .hover\:bg-gray-50\/70:hover { background-color:#20252b }
+.app-dark .bg-amber-50\/60 { background-color:rgba(245,158,11,.1) }
+.app-dark .bg-emerald-50\/60 { background-color:rgba(16,185,129,.1) }
+.app-dark .bg-\[\#0B3D26\]\/\[0\.07\] { background-color:rgba(156,163,175,.12); color:#f3f4f6 }
+.app-dark .bg-\[\#0B3D26\]\/\[0\.04\] { background-color:rgba(156,163,175,.08) }
+.app-dark .bg-slate-100 { background-color:#22272e }
+.app-dark .hover\:bg-white:hover { background-color:#232830 }
+.app-dark .hover\:bg-gray-50:hover { background-color:#20252b }
+.app-dark .hover\:bg-gray-100:hover { background-color:#2a3038 }
+.app-dark .hover\:bg-gray-200:hover { background-color:#323943 }
+.app-dark .hover\:bg-gray-50\/80:hover { background-color:#20252b }
+.app-dark .text-gray-900 { color:#f3f4f6 }
+.app-dark .text-gray-800 { color:#e5e7eb }
+.app-dark .text-gray-700 { color:#d1d5db }
+.app-dark .text-gray-600 { color:#b4bbc6 }
+.app-dark .text-gray-500 { color:#98a1ae }
+.app-dark .text-gray-400 { color:#7d8693 }
+.app-dark .text-black { color:#f3f4f6 }
+.app-dark .text-slate-800 { color:#e5e7eb }
+.app-dark .text-slate-700 { color:#d1d5db }
+.app-dark .text-slate-600 { color:#b4bbc6 }
+.app-dark .hover\:text-gray-900:hover { color:#ffffff }
+.app-dark .hover\:text-gray-800:hover { color:#f3f4f6 }
+.app-dark .hover\:text-gray-700:hover { color:#e5e7eb }
+.app-dark .hover\:text-gray-600:hover { color:#d1d5db }
+.app-dark .hover\:text-gray-500:hover { color:#b4bbc6 }
+.app-dark .border-gray-100 { border-color:#22272e }
+.app-dark .border-gray-200 { border-color:#2a3038 }
+.app-dark .border-gray-300 { border-color:#363d47 }
+.app-dark .border-white { border-color:#1b1f24 }
+.app-dark .hover\:border-gray-200:hover { border-color:#3d444d }
+.app-dark .hover\:border-gray-300:hover { border-color:#454d59 }
+.app-dark .hover\:border-gray-400:hover { border-color:#515a67 }
+.app-dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]), .app-dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color:#2a3038 }
+/* Responsive border colours: `.app-dark .border-gray-100` does not match `.lg:border-gray-100`,
+   so variant-prefixed borders kept Tailwind's light default in dark mode. */
+.app-dark :is(.sm\:border-gray-100, .md\:border-gray-100, .lg\:border-gray-100, .xl\:border-gray-100) { border-color:#22272e }
+.app-dark :is(.sm\:border-gray-200, .md\:border-gray-200, .lg\:border-gray-200, .xl\:border-gray-200) { border-color:#2a3038 }
+.app-dark :is(.sm\:border-gray-300, .md\:border-gray-300, .lg\:border-gray-300, .xl\:border-gray-300) { border-color:#363d47 }
+.app-dark :is(.sm\:border-white, .md\:border-white, .lg\:border-white, .xl\:border-white) { border-color:#1b1f24 }
+.app-dark .ring-white { --tw-ring-color:#1b1f24 }
+.app-dark .bg-purple-50 { background-color:rgba(168,85,247,.12) }
+.app-dark .bg-purple-100 { background-color:rgba(168,85,247,.18) }
+.app-dark .text-purple-500 { color:#e5e7eb }
+.app-dark .text-purple-600 { color:#e5e7eb }
+.app-dark .text-purple-700 { color:#e5e7eb }
+.app-dark .text-purple-800 { color:#e5e7eb }
+.app-dark .border-purple-200 { border-color:rgba(168,85,247,.35) }
+.app-dark .border-purple-100 { border-color:rgba(168,85,247,.25) }
+.app-dark .hover\:bg-purple-50:hover { background-color:rgba(168,85,247,.2) }
+.app-dark .bg-violet-50 { background-color:rgba(156,163,175,.12) }
+.app-dark .bg-violet-100 { background-color:rgba(156,163,175,.18) }
+.app-dark .text-violet-500 { color:#b9a4fb }
+.app-dark .text-violet-600 { color:#b9a4fb }
+.app-dark .text-violet-700 { color:#b9a4fb }
+.app-dark .text-violet-800 { color:#b9a4fb }
+.app-dark .border-violet-200 { border-color:rgba(156,163,175,.35) }
+.app-dark .border-violet-100 { border-color:rgba(156,163,175,.25) }
+.app-dark .hover\:bg-violet-50:hover { background-color:rgba(156,163,175,.2) }
+.app-dark .bg-indigo-50 { background-color:rgba(156,163,175,.12) }
+.app-dark .bg-indigo-100 { background-color:rgba(156,163,175,.18) }
+.app-dark .text-indigo-500 { color:#e5e7eb }
+.app-dark .text-indigo-600 { color:#e5e7eb }
+.app-dark .text-indigo-700 { color:#e5e7eb }
+.app-dark .text-indigo-800 { color:#e5e7eb }
+.app-dark .border-indigo-200 { border-color:rgba(156,163,175,.35) }
+.app-dark .border-indigo-100 { border-color:rgba(156,163,175,.25) }
+.app-dark .hover\:bg-indigo-50:hover { background-color:rgba(156,163,175,.2) }
+.app-dark .bg-blue-50 { background-color:rgba(59,130,246,.12) }
+.app-dark .bg-blue-100 { background-color:rgba(59,130,246,.18) }
+.app-dark .text-blue-500 { color:#8fbcfb }
+.app-dark .text-blue-600 { color:#8fbcfb }
+.app-dark .text-blue-700 { color:#8fbcfb }
+.app-dark .text-blue-800 { color:#8fbcfb }
+.app-dark .border-blue-200 { border-color:rgba(59,130,246,.35) }
+.app-dark .border-blue-100 { border-color:rgba(59,130,246,.25) }
+.app-dark .hover\:bg-blue-50:hover { background-color:rgba(59,130,246,.2) }
+.app-dark .bg-sky-50 { background-color:rgba(14,165,233,.12) }
+.app-dark .bg-sky-100 { background-color:rgba(14,165,233,.18) }
+.app-dark .text-sky-500 { color:#7dd3fc }
+.app-dark .text-sky-600 { color:#7dd3fc }
+.app-dark .text-sky-700 { color:#7dd3fc }
+.app-dark .text-sky-800 { color:#7dd3fc }
+.app-dark .text-sky-900 { color:#e0f2fe }
+.app-dark .border-sky-200 { border-color:rgba(14,165,233,.35) }
+.app-dark .border-sky-100 { border-color:rgba(14,165,233,.25) }
+.app-dark .hover\:bg-sky-50:hover { background-color:rgba(14,165,233,.2) }
+.app-dark .bg-cyan-50 { background-color:rgba(6,182,212,.12) }
+.app-dark .bg-cyan-100 { background-color:rgba(6,182,212,.18) }
+.app-dark .text-cyan-500 { color:#67e8f9 }
+.app-dark .text-cyan-600 { color:#67e8f9 }
+.app-dark .text-cyan-700 { color:#67e8f9 }
+.app-dark .text-cyan-800 { color:#67e8f9 }
+.app-dark .border-cyan-200 { border-color:rgba(6,182,212,.35) }
+.app-dark .border-cyan-100 { border-color:rgba(6,182,212,.25) }
+.app-dark .hover\:bg-cyan-50:hover { background-color:rgba(6,182,212,.2) }
+.app-dark .bg-teal-50 { background-color:rgba(20,184,166,.12) }
+.app-dark .bg-teal-100 { background-color:rgba(20,184,166,.18) }
+.app-dark .text-teal-500 { color:#5eead4 }
+.app-dark .text-teal-600 { color:#5eead4 }
+.app-dark .text-teal-700 { color:#5eead4 }
+.app-dark .text-teal-800 { color:#5eead4 }
+.app-dark .border-teal-200 { border-color:rgba(20,184,166,.35) }
+.app-dark .border-teal-100 { border-color:rgba(20,184,166,.25) }
+.app-dark .hover\:bg-teal-50:hover { background-color:rgba(20,184,166,.2) }
+.app-dark .bg-emerald-50 { background-color:rgba(16,185,129,.12) }
+.app-dark .bg-emerald-100 { background-color:rgba(16,185,129,.18) }
+.app-dark .text-emerald-500 { color:#6ee7b7 }
+.app-dark .text-emerald-600 { color:#6ee7b7 }
+.app-dark .text-emerald-700 { color:#6ee7b7 }
+.app-dark .text-emerald-800 { color:#6ee7b7 }
+.app-dark .border-emerald-200 { border-color:rgba(16,185,129,.35) }
+.app-dark .border-emerald-100 { border-color:rgba(16,185,129,.25) }
+.app-dark .hover\:bg-emerald-50:hover { background-color:rgba(16,185,129,.2) }
+.app-dark .bg-green-50 { background-color:rgba(34,197,94,.12) }
+.app-dark .bg-green-100 { background-color:rgba(34,197,94,.18) }
+.app-dark .text-green-500 { color:#86efac }
+.app-dark .text-green-600 { color:#86efac }
+.app-dark .text-green-700 { color:#86efac }
+.app-dark .text-green-800 { color:#86efac }
+.app-dark .border-green-200 { border-color:rgba(34,197,94,.35) }
+.app-dark .border-green-100 { border-color:rgba(34,197,94,.25) }
+.app-dark .hover\:bg-green-50:hover { background-color:rgba(34,197,94,.2) }
+.app-dark .bg-yellow-50 { background-color:rgba(234,179,8,.12) }
+.app-dark .bg-yellow-100 { background-color:rgba(234,179,8,.18) }
+.app-dark .text-yellow-500 { color:#fde047 }
+.app-dark .text-yellow-600 { color:#fde047 }
+.app-dark .text-yellow-700 { color:#fde047 }
+.app-dark .text-yellow-800 { color:#fde047 }
+.app-dark .border-yellow-200 { border-color:rgba(234,179,8,.35) }
+.app-dark .border-yellow-100 { border-color:rgba(234,179,8,.25) }
+.app-dark .hover\:bg-yellow-50:hover { background-color:rgba(234,179,8,.2) }
+.app-dark .bg-amber-50 { background-color:rgba(245,158,11,.12) }
+.app-dark .bg-amber-100 { background-color:rgba(245,158,11,.18) }
+.app-dark .text-amber-500 { color:#fcd34d }
+.app-dark .text-amber-600 { color:#fcd34d }
+.app-dark .text-amber-700 { color:#fcd34d }
+.app-dark .text-amber-800 { color:#fcd34d }
+.app-dark .border-amber-200 { border-color:rgba(245,158,11,.35) }
+.app-dark .border-amber-100 { border-color:rgba(245,158,11,.25) }
+.app-dark .hover\:bg-amber-50:hover { background-color:rgba(245,158,11,.2) }
+.app-dark .bg-orange-50 { background-color:rgba(249,115,22,.12) }
+.app-dark .bg-orange-100 { background-color:rgba(249,115,22,.18) }
+.app-dark .text-orange-500 { color:#fdba74 }
+.app-dark .text-orange-600 { color:#fdba74 }
+.app-dark .text-orange-700 { color:#fdba74 }
+.app-dark .text-orange-800 { color:#fdba74 }
+.app-dark .border-orange-200 { border-color:rgba(249,115,22,.35) }
+.app-dark .border-orange-100 { border-color:rgba(249,115,22,.25) }
+.app-dark .hover\:bg-orange-50:hover { background-color:rgba(249,115,22,.2) }
+.app-dark .bg-red-50 { background-color:rgba(239,68,68,.12) }
+.app-dark .bg-red-100 { background-color:rgba(239,68,68,.18) }
+.app-dark .text-red-500 { color:#fca5a5 }
+.app-dark .text-red-600 { color:#fca5a5 }
+.app-dark .text-red-700 { color:#fca5a5 }
+.app-dark .text-red-800 { color:#fca5a5 }
+.app-dark .border-red-200 { border-color:rgba(239,68,68,.35) }
+.app-dark .border-red-100 { border-color:rgba(239,68,68,.25) }
+.app-dark .hover\:bg-red-50:hover { background-color:rgba(239,68,68,.2) }
+.app-dark .bg-rose-50 { background-color:rgba(244,63,94,.12) }
+.app-dark .bg-rose-100 { background-color:rgba(244,63,94,.18) }
+.app-dark .text-rose-500 { color:#fda4af }
+.app-dark .text-rose-600 { color:#fda4af }
+.app-dark .text-rose-700 { color:#fda4af }
+.app-dark .text-rose-800 { color:#fda4af }
+.app-dark .border-rose-200 { border-color:rgba(244,63,94,.35) }
+.app-dark .border-rose-100 { border-color:rgba(244,63,94,.25) }
+.app-dark .hover\:bg-rose-50:hover { background-color:rgba(244,63,94,.2) }
+/* Hover shades used by status lozenges (e.g. the task status button) */
+.app-dark .hover\:bg-blue-200:hover { background-color:rgba(59,130,246,.28) }
+.app-dark .hover\:bg-purple-200:hover { background-color:rgba(168,85,247,.28) }
+.app-dark .hover\:bg-green-200:hover { background-color:rgba(34,197,94,.28) }
+.app-dark .hover\:bg-red-200:hover { background-color:rgba(239,68,68,.28) }
+.app-dark .hover\:bg-amber-200:hover { background-color:rgba(245,158,11,.28) }
+.app-dark .bg-pink-50 { background-color:rgba(236,72,153,.12) }
+.app-dark .bg-pink-100 { background-color:rgba(236,72,153,.18) }
+.app-dark .text-pink-500 { color:#f9a8d4 }
+.app-dark .text-pink-600 { color:#f9a8d4 }
+.app-dark .text-pink-700 { color:#f9a8d4 }
+.app-dark .text-pink-800 { color:#f9a8d4 }
+.app-dark .border-pink-200 { border-color:rgba(236,72,153,.35) }
+.app-dark .border-pink-100 { border-color:rgba(236,72,153,.25) }
+.app-dark .hover\:bg-pink-50:hover { background-color:rgba(236,72,153,.2) }
+
+/* Dark-mode accent: indigo replaces the brand purple (#0B3D26) */
+.app-dark :focus-visible { outline-color: #9ca3af; }
+.app-dark input.title-underline-input { background-image: linear-gradient(#9ca3af, #9ca3af), linear-gradient(#374151, #374151); }
+.app-dark input[type="checkbox"], .app-dark input[type="radio"] { accent-color: #4b5563; }
+.app-dark input[type="checkbox"]:checked { background-color: #4b5563; border-color: #4b5563; }
+.app-dark input[type="checkbox"]:focus { box-shadow: 0 0 0 2px rgba(156,163,175,.3); }
+.app-dark .checkbox-theme:checked,
+.app-dark input[type="checkbox"].text-\[\#0B3D26\]:checked { background-color: #4b5563 !important; border-color: #4b5563 !important; }
+.app-dark input[type="radio"]:checked { background-color: #4b5563; border-color: #4b5563; }
+.app-dark .bg-\[\#0B3D26\] { background-color:#4b5563 }
+.app-dark .hover\:bg-\[\#14502F\]:hover { background-color:#6b7280 }
+.app-dark .hover\:bg-\[\#082C1B\]:hover { background-color:#6b7280 }
+.app-dark .hover\:bg-\[\#082C1B\]:hover { background-color:#6b7280 }
+.app-dark .hover\:bg-\[\#082C1B\]:hover { background-color:#6b7280 }
+.app-dark .bg-\[\#0B3D26\]\/10 { background-color:rgba(156,163,175,0.15) }
+.app-dark .bg-\[\#0B3D26\]\/5 { background-color:rgba(156,163,175,0.08) }
+.app-dark .bg-\[\#0B3D26\]\/8 { background-color:rgba(156,163,175,0.12) }
+.app-dark .hover\:bg-\[\#0B3D26\]\/5:hover { background-color:rgba(156,163,175,.12) }
+.app-dark .peer:checked ~ .peer-checked\:bg-\[\#0B3D26\] { background-color:#4b5563 }
+.app-dark .text-\[\#0B3D26\] { color:#e5e7eb }
+.app-dark .hover\:text-\[\#0B3D26\]:hover { color:#e5e7eb }
+.app-dark .group:hover .group-hover\:text-\[\#0B3D26\] { color:#e5e7eb }
+.app-dark .hover\:text-\[\#14502F\]:hover { color:#f3f4f6 }
+.app-dark .text-\[\#4F8A68\] { color:#e5e7eb }
+.app-dark .border-\[\#0B3D26\] { border-color:#4b5563 }
+.app-dark .border-\[\#4F8A68\] { border-color:#9ca3af }
+.app-dark .border-\[\#0B3D26\]\/20 { border-color:rgba(156,163,175,.28) }
+.app-dark .border-\[\#0B3D26\]\/30 { border-color:rgba(156,163,175,.4) }
+.app-dark .hover\:border-\[\#0B3D26\]\/30:hover { border-color:rgba(156,163,175,.4) }
+.app-dark .hover\:border-\[\#0B3D26\]\/50:hover { border-color:rgba(156,163,175,.55) }
+.app-dark .hover\:border-\[\#0B3D26\]:hover { border-color:#9ca3af }
+.app-dark .hover\:border-l-\[\#0B3D26\]:hover { border-left-color:#9ca3af }
+.app-dark .focus\:border-\[\#0B3D26\]:focus { border-color:#9ca3af }
+.app-dark .focus\:ring-\[\#0B3D26\]:focus { --tw-ring-color:#9ca3af }
+.app-dark .focus\:ring-\[\#0B3D26\]\/10:focus { --tw-ring-color:rgba(156,163,175,.25) }
+.app-dark .focus\:ring-\[\#0B3D26\]\/20:focus { --tw-ring-color:rgba(156,163,175,.3) }
+.app-dark .ring-\[\#0B3D26\] { --tw-ring-color:#9ca3af }
+.app-dark .peer:focus ~ .peer-focus\:ring-\[\#0B3D26\]\/20 { --tw-ring-color:rgba(156,163,175,.3) }
+.app-dark .from-\[\#0B3D26\] { --tw-gradient-from:#4b5563 var(--tw-gradient-from-position); --tw-gradient-to:rgb(75 85 99 / 0) var(--tw-gradient-to-position); --tw-gradient-stops:var(--tw-gradient-from), var(--tw-gradient-to) }
+.app-dark .to-\[\#4F8A68\] { --tw-gradient-to:#9ca3af var(--tw-gradient-to-position) }
+.app-dark .bg-\[\#e6f0f1\] { background-color:rgba(20,184,166,.12) }
+
+/* Dark-mode active nav item: same look as the main sidebar active icon
+   (translucent white pill) for Tickets, Tasks, KB, Assets, Surveys and Settings menus */
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium,
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium,
+.app-dark aside :is(a,button).bg-\[\#0B3D26\].text-white {
+  background-color: rgba(255,255,255,.15);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium .text-\[\#0B3D26\],
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium .text-\[\#0B3D26\],
+.app-dark aside :is(a,button).bg-\[\#0B3D26\].text-white .text-\[\#0B3D26\] { color: #fff; }
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium [class*="bg-[#0B3D26]/"],
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium [class*="bg-[#0B3D26]/"],
+.app-dark aside :is(a,button).bg-\[\#0B3D26\].text-white [class*="bg-[#0B3D26]/"] { background-color: rgba(255,255,255,.18); color: #fff; }
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium .bg-\[\#0B3D26\],
+.app-dark :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium .bg-\[\#0B3D26\],
+.app-dark aside :is(a,button).bg-\[\#0B3D26\].text-white .bg-\[\#0B3D26\] { background-color: #fff; }
+
+/* Light-mode active nav item: matches the main sidebar active icon (light-gray pill, dark text) */
+.app-light :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium,
+.app-light :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium,
+.app-light aside :is(a,button).bg-\[\#0B3D26\].text-white {
+  background-color: #f3f4f6;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+.app-light :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium .text-\[\#0B3D26\],
+.app-light :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium .text-\[\#0B3D26\],
+.app-light aside :is(a,button).bg-\[\#0B3D26\].text-white .text-\[\#0B3D26\] { color: #111827; }
+.app-light :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium [class*="bg-[#0B3D26]/"],
+.app-light :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium [class*="bg-[#0B3D26]/"],
+.app-light aside :is(a,button).bg-\[\#0B3D26\].text-white [class*="bg-[#0B3D26]/"] { background-color: #e5e7eb; color: #111827; }
+.app-light :is(a,button).bg-\[\#0B3D26\]\/8.text-\[\#0B3D26\].font-medium .bg-\[\#0B3D26\],
+.app-light :is(a,button).bg-\[\#0B3D26\]\/10.text-\[\#0B3D26\].font-medium .bg-\[\#0B3D26\],
+.app-light aside :is(a,button).bg-\[\#0B3D26\].text-white .bg-\[\#0B3D26\] { background-color: #111827; }
+
+/* Detail views: active tab underline/text and status-stepper step use the same indicator colour as the main sidebar */
+.app-dark :is(a,button).border-b-2.border-\[\#0B3D26\].text-\[\#0B3D26\] { color: #fff; border-color: #fff; }
+.app-dark :is(a,button).border-b-2.border-\[\#0B3D26\].text-\[\#0B3D26\].bg-purple-50 { background-color: rgba(255,255,255,.08); }
+.app-dark .bg-\[\#0B3D26\].text-white.z-20 { background-color: #f3f4f6; color: #111827; }
+.app-light :is(a,button).border-b-2.border-\[\#0B3D26\].text-\[\#0B3D26\] { color: #111827; border-color: #111827; }
+.app-light :is(a,button).border-b-2.border-\[\#0B3D26\].text-\[\#0B3D26\].bg-purple-50 { background-color: #f3f4f6; }
+.app-light .bg-\[\#0B3D26\].text-white.z-20 { background-color: #111827; color: #fff; }
+
+/* Ticket list (detailed view): selected item uses the same pill as the main sidebar active item, no left bar */
+.app-dark .border-l-\[\#0B3D26\].bg-\[\#0B3D26\]\/5 { border-left-color: transparent; background-color: rgba(255,255,255,.15); }
+.app-dark .border-l-4.border-\[\#0B3D26\].bg-\[\#0B3D26\]\/10 { border-left-color: transparent; background-color: rgba(255,255,255,.15); }
+.app-light .border-l-\[\#0B3D26\].bg-\[\#0B3D26\]\/5 { border-left-color: transparent; background-color: #f3f4f6; }
+.app-light .border-l-4.border-\[\#0B3D26\].bg-\[\#0B3D26\]\/10 { border-left-color: transparent; background-color: #f3f4f6; }
+
+/* Dark mode: Popover panels/arrows (inline-styled) and the draft-js rich editor */
+.app-dark, .popover-dark { --popover-bg: #262c34; --popover-border: #4a525e; --popover-shadow: 0 0 0 1px rgba(255,255,255,.04), 0 18px 48px rgba(0,0,0,.7); }
+/* Popover content: raised panel with recessed inputs so fields stand out */
+.app-dark .popover-panel input:not([type="checkbox"]):not([type="radio"]),
+.app-dark .popover-panel select,
+.app-dark .popover-panel textarea { background-color: #181c21; border-color: #4a525e; }
+.app-dark .popover-panel .bg-white { background-color: #262c34; }
+.app-dark .popover-panel .bg-gray-50\/50 { background-color: #1e232a; }
+.app-dark .popover-panel .border-gray-200 { border-color: #3a414b; }
+.app-dark .popover-panel .rdw-editor-toolbar { background: #262c34; border-color: #3a414b; }
+.app-dark .popover-panel .rdw-editor-main { background: #181c21; }
+.app-dark .rdw-editor-toolbar { background: #1b1f24; border-color: #2a3038; color: #e5e7eb; }
+.app-dark .rdw-option-wrapper,
+.app-dark .rdw-dropdown-wrapper { background: #22272e; border-color: #363d47; color: #e5e7eb; }
+.app-dark .rdw-option-wrapper:hover,
+.app-dark .rdw-dropdown-wrapper:hover { background: #2a3038; box-shadow: none; }
+.app-dark .rdw-option-active { background: #3a414b; box-shadow: none; }
+.app-dark .rdw-option-wrapper img,
+.app-dark .rdw-dropdown-wrapper img { filter: invert(1); }
+.app-dark .rdw-dropdown-optionwrapper,
+.app-dark .rdw-link-modal,
+.app-dark .rdw-image-modal { background: #1b1f24; border-color: #363d47; color: #e5e7eb; }
+.app-dark .rdw-dropdownoption-active,
+.app-dark .rdw-dropdownoption-highlighted { background: #2a3038; }
+.app-dark .rdw-editor-main { color: #e5e7eb; }
+.app-dark .public-DraftEditorPlaceholder-root { color: #7d8693; }
+
+/* Shared enter animations (modals, popovers, page sections) */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.15s ease-out; }
+.animate-scaleIn { animation: scaleIn 0.18s ease-out; }
+@keyframes stepIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-stepIn { animation: stepIn 0.22s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn, .animate-scaleIn, .animate-stepIn { animation: none; }
+}
+
+/* ─── Customer portal ───
+   PortalShell applies .app-light/.app-dark + .portal-root, so pages reuse the
+   app palette remap above. These cover the portal-only surfaces. */
+.portal-root { background-color: #f8f7fa; }
+.portal-root.app-dark { background-color: #101317; }
+.portal-header { background-color: rgba(255,255,255,.85); }
+.app-dark .portal-header { background-color: rgba(16,19,23,.82); }
+.portal-header--scrolled { box-shadow: 0 1px 0 rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12); }
+.app-dark .portal-header--scrolled { box-shadow: 0 1px 0 rgba(255,255,255,.04), 0 8px 24px -12px rgba(0,0,0,.6); }
+
+.portal-hero { background: linear-gradient(135deg, #0B3D26 0%, #14502F 55%, #2E6B49 100%); }
+.app-dark .portal-hero { background: linear-gradient(135deg, #1e1b4b 0%, #2a2467 55%, #312e81 100%); box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+.portal-hero-grid {
+  background-image: radial-gradient(rgba(255,255,255,.14) 1px, transparent 1px);
+  background-size: 18px 18px;
+  mask-image: linear-gradient(to bottom left, #000 10%, transparent 65%);
+}
+/* Hero is always dark: keep its brand-coloured text/buttons readable in both themes */
+.portal-hero .bg-white { background-color: #fff; }
+.portal-hero .text-gray-900 { color: #111827; }
+.app-dark .portal-hero .text-\[\#0B3D26\] { color: #312e81; }
+.app-dark .portal-hero input:not([type="checkbox"]):not([type="radio"]) { background-color: #fff; color: #111827; border-color: transparent; }
+.app-dark .portal-hero .hover\:bg-gray-50:hover { background-color: #f3f4f6; }
+
+.portal-tint { background-color: rgba(245,238,245,.6); border-color: rgba(11, 61, 38,.15); }
+.app-dark .portal-tint { background-color: rgba(156,163,175,.08); border-color: rgba(156,163,175,.2); }
+.app-dark .from-\[\#f5eef5\] { --tw-gradient-from: #22273a var(--tw-gradient-from-position); --tw-gradient-to: rgb(34 39 58 / 0) var(--tw-gradient-to-position); --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to); }
+.app-dark .to-gray-50 { --tw-gradient-to: #171a1f var(--tw-gradient-to-position); }
+.app-dark .bg-white\/90 { background-color: rgba(27,31,36,.9); }
+.app-dark .bg-\[\#0B3D26\]\/15 { background-color: rgba(156,163,175,.2); }
+.app-dark .ring-\[\#0B3D26\]\/15 { --tw-ring-color: rgba(156,163,175,.25); }
+.app-dark .border-\[\#0B3D26\]\/10 { border-color: rgba(156,163,175,.2); }
+.app-dark .bg-white\/85 { background-color: rgba(27,31,36,.85); }
+.app-dark .avatar-tile { background-color: rgba(156,163,175,.2); color: #f3f4f6; box-shadow: inset 0 0 0 1px rgba(156,163,175,.3); }
+.app-dark .avatar-tile-muted { background-color: #2f353e; color: #b4bbc6; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.app-dark .bg-\[\#0B3D26\]\/30 { background-color: rgba(156,163,175,.35); }
+.app-dark .border-\[\#0B3D26\]\/40 { border-color: rgba(156,163,175,.45); }
+.app-dark .hover\:bg-\[\#0B3D26\]\/\[0\.05\]:hover { background-color: rgba(156,163,175,.1); }
+.app-dark .bg-gray-100.portal-avatar { background-color: #2a3038; }
+.app-dark .prose { color: #d1d5db; }
+.app-dark .prose :is(h1,h2,h3,h4,strong,b) { color: #f3f4f6; }
+.app-dark .prose a { color: #e5e7eb; }
+.app-dark .prose code { color: #e5e7eb; }
+
+/* Portal motion */
+@keyframes portalRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes portalSlideIn {
+  from { opacity: 0; transform: translateX(var(--slide-from, 16px)); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes portalPop {
+  0% { opacity: 0; transform: scale(.6); }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+@keyframes portalDraw { to { stroke-dashoffset: 0; } }
+@keyframes portalSpinIn {
+  from { opacity: 0; transform: rotate(-90deg) scale(.5); }
+  to { opacity: 1; transform: rotate(0) scale(1); }
+}
+.animate-portalRise { animation: portalRise .45s cubic-bezier(.22,1,.36,1) both; }
+.animate-portalSlideIn { animation: portalSlideIn .35s cubic-bezier(.22,1,.36,1) both; }
+.animate-portalPop { animation: portalPop .5s cubic-bezier(.34,1.56,.64,1) both; }
+.animate-portalSpinIn { animation: portalSpinIn .35s cubic-bezier(.34,1.56,.64,1) both; }
+.portal-check-path { stroke-dasharray: 30; stroke-dashoffset: 30; animation: portalDraw .45s .3s ease-out forwards; }
+.portal-lift { transition: transform 200ms cubic-bezier(.22,1,.36,1), box-shadow 200ms ease, border-color 150ms ease; }
+.portal-lift:hover { transform: translateY(-2px); }
+@media (prefers-reduced-motion: reduce) {
+  .animate-portalRise, .animate-portalSlideIn, .animate-portalPop, .animate-portalSpinIn { animation: none; }
+  .portal-check-path { animation: none; stroke-dashoffset: 0; }
+  .portal-lift:hover { transform: none; }
+}
+
+/* Integrations: connect visual */
+@keyframes integrationFlow {
+  0% { left: 0; opacity: 0; transform: translateY(-50%) scale(.6); }
+  15% { opacity: 1; transform: translateY(-50%) scale(1); }
+  85% { opacity: 1; }
+  100% { left: calc(100% - 8px); opacity: 0; transform: translateY(-50%) scale(.6); }
+}
+@keyframes integrationFloat {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -4px; }
+}
+.integration-flow-dot { position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 9999px; animation: integrationFlow 1.2s ease-in-out infinite; }
+.integration-float { animation-name: portalPop, integrationFloat; animation-duration: .5s, 3s; animation-timing-function: cubic-bezier(.34,1.56,.64,1), ease-in-out; animation-iteration-count: 1, infinite; animation-fill-mode: both, none; animation-delay: 120ms, .7s; }
+@media (prefers-reduced-motion: reduce) {
+  .integration-flow-dot { animation: none; display: none; }
+  .integration-float { animation: none; }
+}
+
+/* Shared Select (components/SearchableSelect.jsx) */
+@keyframes selectPop { from { opacity: 0; transform: scale(.97) translateY(-2px); } to { opacity: 1; transform: none; } }
+@keyframes selectSheet { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes selectFade { from { opacity: 0; } to { opacity: 1; } }
+.select-pop { animation: selectPop .14s cubic-bezier(.2,.8,.2,1); }
+.select-sheet { animation: selectSheet .24s cubic-bezier(.2,.8,.2,1); }
+.select-fade { animation: selectFade .18s ease-out; }
+@media (prefers-reduced-motion: reduce) { .select-pop, .select-sheet, .select-fade { animation: none; } }
+
+/* @mentions inside rendered comments */
+.mention-html a[href^="#user-"] {
+  font-weight: 600;
+  color: var(--re-accent, #0B3D26);
+  text-decoration: none;
+  cursor: pointer;
+}
+.mention-html a[href^="#user-"]:hover { text-decoration: underline; }
+
+/* Toasts (components/AppToaster.jsx): rise from the bottom, fade out downward */
+@keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(12px) scale(.96); } }
+@media (prefers-reduced-motion: reduce) {
+  @keyframes toastIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
 }

@@ -94,7 +94,7 @@ MIDDLEWARE = [
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     # 'shared.middlewares.CsrfMiddleware.InertiaCSRFMiddleware',
-    # 'django.middleware.csrf.CsrfViewMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -272,7 +272,14 @@ DEFAULT_FROM_NAME = config('DEFAULT_FROM_NAME', default='ImaraDesk')
 # =========================
 
 # Redis as message broker
-CELERY_BROKER_URL = config('REDIS_URL', default='redis://localhost:6379/0')
+REDIS_URL = config('REDIS_URL', default='redis://localhost:6379/0')
+CELERY_BROKER_URL = REDIS_URL
+
+# Public address of this install, used for links in emails
+SITE_URL = config('SITE_URL', default='')
+
+# Resolved tickets are closed after this many minutes
+AUTO_CLOSE_INTERVAL_MINUTES = config('AUTO_CLOSE_INTERVAL_MINUTES', default=1440, cast=int)
 
 # Celery settings
 CELERY_ACCEPT_CONTENT = ['json']

@@ -16,11 +16,13 @@ class SLAPolicyForm(forms.ModelForm):
             'status',
             'apply_business_hours',
             'apply_holidays',
-            'apply_to_new_tickets',
             'send_escalation_emails',
             'auto_assign_on_breach',
             'pause_on_pending',
             'notify_before_breach',
+            'use_custom_rules',
+            'custom_rules',
+            'rules_logic',
         ]
         widgets = {
             'description': forms.Textarea(attrs={'rows': 3}),
@@ -29,46 +31,78 @@ class SLAPolicyForm(forms.ModelForm):
             'first_response_time': 'Time in minutes for first response',
             'resolution_time': 'Time in minutes for ticket resolution',
         }
-    
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Legacy rows may store the priority/status in uppercase. Normalise the
+        # incoming data before choice validation runs so updates don't fail.
+        if self.is_bound:
+            self.data = self.data.copy()
+            for key in ('priority', 'status'):
+                value = self.data.get(key)
+                if isinstance(value, str):
+                    self.data[key] = value.lower()
+
+    def clean_priority(self):
+        """Store the canonical lowercase priority, even if legacy rows used uppercase."""
+        value = self.cleaned_data.get('priority')
+        return value.lower() if isinstance(value, str) else value
+
+    def clean_status(self):
+        value = self.cleaned_data.get('status')
+        return value.lower() if isinstance(value, str) else value
+
     def clean(self):
         cleaned_data = super().clean()
         first_response = cleaned_data.get('first_response_time')
         resolution = cleaned_data.get('resolution_time')
-        apply_to_new_tickets = cleaned_data.get('apply_to_new_tickets')
         priority = cleaned_data.get('priority')
+        status = cleaned_data.get('status')
+        use_custom_rules = cleaned_data.get('use_custom_rules')
+        custom_rules = cleaned_data.get('custom_rules')
         
-        # Debug logging
-        print(f"DEBUG - Form clean() called")
-        print(f"DEBUG - apply_to_new_tickets: {apply_to_new_tickets} (type: {type(apply_to_new_tickets)})")
-        print(f"DEBUG - priority: {priority}")
+        # Ensure custom_rules is never None (database has NOT NULL constraint)
+        if custom_rules is None:
+            cleaned_data['custom_rules'] = []
         
         if first_response and resolution and first_response >= resolution:
             raise forms.ValidationError(
                 'First response time must be less than resolution time.'
             )
         
-        # Validate that only one policy can have apply_to_new_tickets enabled per priority
-        if apply_to_new_tickets and priority:
-            print(f"DEBUG - Checking for existing policies with apply_to_new_tickets=True and priority={priority}")
+        if use_custom_rules:
+            # Validate custom rules structure
+            if custom_rules:
+                if not isinstance(custom_rules, list):
+                    raise forms.ValidationError('Custom rules must be a list.')
+                
+                for rule in custom_rules:
+                    if not isinstance(rule, dict):
+                        raise forms.ValidationError('Each rule must be an object.')
+                    
+                    required_fields = ['field', 'operator']
+                    for field in required_fields:
+                        if field not in rule:
+                            raise forms.ValidationError(f'Each rule must have a "{field}" field.')
+        
+        # Only one active simple-mode policy can exist per priority, otherwise
+        # it would be ambiguous which one a ticket gets.
+        if status == 'active' and priority and not use_custom_rules:
             existing_query = SLAPolicy.objects.filter(
-                priority=priority,
-                apply_to_new_tickets=True
+                priority__iexact=priority,
+                status='active',
+                use_custom_rules=False,
             )
             # Exclude current instance if updating
             if self.instance.pk:
                 existing_query = existing_query.exclude(pk=self.instance.pk)
             
-            existing_count = existing_query.count()
-            print(f"DEBUG - Found {existing_count} existing policies")
-            
             if existing_query.exists():
                 existing_policy = existing_query.first()
-                error_msg = (
-                    f'Another policy "{existing_policy.name}" is already set to apply to new {priority} priority tickets. '
-                    f'Please disable it first before enabling this option on another policy.'
+                raise forms.ValidationError(
+                    f'Another active policy "{existing_policy.name}" already applies to {priority} priority tickets. '
+                    f'Deactivate it first, or use custom rules for this policy.'
                 )
-                print(f"DEBUG - Raising validation error: {error_msg}")
-                raise forms.ValidationError(error_msg)
         
         return cleaned_data
 

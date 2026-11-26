@@ -76,6 +76,8 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Start Django development server
 echo "[Django] Starting..."
+python manage.py makemigrations
+python manage.py migrate
 set -m
 python manage.py runserver 0.0.0.0:8000 &
 PIDS+=($!)
@@ -85,7 +87,7 @@ sleep 2
 
 # Start Celery worker
 echo "[Celery Worker] Starting..."
-celery -A config worker --loglevel=info --concurrency=2 -Q celery,email_processing,sla_notifications,reports,asset_management &
+celery -A config worker --loglevel=info --concurrency=2 -Q celery,email_processing,sla_notifications,reports &
 PIDS+=($!)
 
 # Wait for worker to start

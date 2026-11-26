@@ -1,11 +1,11 @@
 from django.contrib import admin
-from .models import App, InstalledApp, KnowledgeBaseSettings, SecuritySettings, SecuritySettings
+from .models import App, InstalledApp, KnowledgeBaseSettings, SecuritySettings
 
 
 @admin.register(App)
 class AppAdmin(admin.ModelAdmin):
-    list_display = ['name', 'category', 'price', 'is_free', 'status', 'is_featured', 'install_count']
-    list_filter = ['category', 'status', 'is_free', 'is_featured']
+    list_display = ['name', 'category', 'status', 'is_featured', 'install_count']
+    list_filter = ['category', 'status', 'is_featured']
     search_fields = ['name', 'description', 'slug']
     prepopulated_fields = {'slug': ('name',)}
     readonly_fields = ['install_count', 'created_at', 'updated_at']
@@ -13,9 +13,6 @@ class AppAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'slug', 'description', 'long_description', 'icon', 'category')
-        }),
-        ('Pricing', {
-            'fields': ('price', 'is_free')
         }),
         ('Status & Visibility', {
             'fields': ('status', 'is_featured')
@@ -29,17 +26,14 @@ class AppAdmin(admin.ModelAdmin):
 
 @admin.register(InstalledApp)
 class InstalledAppAdmin(admin.ModelAdmin):
-    list_display = ['app', 'subscription_status', 'is_active', 'installed_at', 'trial_ends_at']
-    list_filter = ['subscription_status', 'is_active']
+    list_display = ['app', 'is_active', 'installed_at']
+    list_filter = ['is_active']
     search_fields = ['app__name']
     readonly_fields = ['installed_at', 'updated_at']
     
     fieldsets = (
         ('App Information', {
             'fields': ('app', 'is_active')
-        }),
-        ('Subscription', {
-            'fields': ('subscription_status', 'trial_ends_at', 'next_billing_date')
         }),
         ('Configuration', {
             'fields': ('settings',)
@@ -103,4 +97,3 @@ class KnowledgeBaseSettingsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Don't allow deletion
         return False
-

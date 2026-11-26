@@ -35,25 +35,15 @@ export default function ForgotPassword() {
   }
 
   return (
-    <AuthLayout
-      title="Reset Your Password"
-      subtitle="Don't worry! It happens. Enter your email and we'll send you a link to reset your password."
-      features={[
-        'Secure password reset process',
-        'Link expires in 24 hours',
-        'No account access required'
-      ]}
-    >
+    <AuthLayout>
       <Head title="Forgot Password" />
       
       {!emailSent ? (
         <>
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-2 text-center">
-            Forgot Password?
-          </h1>
-          <p className="text-gray-500 mb-6 md:mb-8 text-center text-sm sm:text-base">
-            Enter your email to receive a reset link
-          </p>
+          <div className="mb-7">
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">Forgot password?</h1>
+            <p className="text-sm text-gray-500">Enter your email and we'll send you a reset link</p>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
@@ -69,7 +59,7 @@ export default function ForgotPassword() {
                   type="email"
                   value={data.email}
                   onChange={e => setData('email', e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#4a154b] focus:border-transparent bg-gray-50"
+                  className="w-full pl-12 pr-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#0B3D26] focus:border-transparent bg-gray-50"
                   placeholder="you@example.com"
                   required
                   autoComplete="email"
@@ -80,14 +70,14 @@ export default function ForgotPassword() {
             <button
               type="submit"
               disabled={processing}
-              className="w-full bg-[#4a154b] text-white py-3 rounded-lg font-semibold hover:bg-[#5a235c] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-[#0B3D26] text-white py-3 rounded-lg font-semibold hover:bg-[#14502F] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {processing ? 'Sending...' : 'Send Reset Link'}
             </button>
           </form>
 
           <div className="mt-6 text-center">
-            <Link href="/login/" className="text-sm text-[#4a154b] font-semibold hover:underline flex items-center justify-center gap-2">
+            <Link href="/login/" className="text-sm text-[#0B3D26] font-semibold hover:underline flex items-center justify-center gap-2">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
@@ -114,13 +104,13 @@ export default function ForgotPassword() {
           <div className="space-y-3">
             <button
               onClick={() => setEmailSent(false)}
-              className="w-full bg-[#4a154b] text-white py-3 rounded-lg font-semibold hover:bg-[#5a235c] transition-colors"
+              className="w-full bg-[#0B3D26] text-white py-3 rounded-lg font-semibold hover:bg-[#14502F] transition-colors"
             >
               Try Another Email
             </button>
             <Link 
               href="/login/" 
-              className="block w-full text-center py-3 text-[#4a154b] font-semibold hover:underline"
+              className="block w-full text-center py-3 text-[#0B3D26] font-semibold hover:underline"
             >
               Back to Sign In
             </Link>
